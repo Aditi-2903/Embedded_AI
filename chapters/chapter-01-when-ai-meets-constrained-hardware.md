@@ -1,87 +1,64 @@
-# Chapter 1 — When AI Meets Constrained Hardware
+# Chapter 1: When AI Meets Constrained Hardware
 
-> *The student learns to describe the embedded-AI intersection as a design problem, not a technology trend.*
-
-**Part I — The Embedded-AI Problem**
-
----
-
-## Learning Outcomes
-
-- **LO1.1** [Understand] Explain the defining characteristics of an embedded system that make AI integration non-trivial
-- **LO1.2** [Analyze] Distinguish between AI applications that are server-appropriate and those that require on-device deployment
-- **LO1.3** [Evaluate] Assess a proposed AI embedded application and identify the constraint categories that will determine feasibility
-
----
-
-## Opening: A Production Failure
-
-> *A real failure case — a deployed product where AI integration caused a latency, power, or reliability failure in production. The student should not know how to diagnose it yet. That becomes the hook for the entire course.*
-
-<!-- TODO: Insert case study — suggested: smart home device AI inference causing missed hard deadline under battery power -->
-
----
-
-## 1.1 What "Embedded" Actually Means
-
-> *What "embedded" means as a constraint environment vs. a device category*
-
-<!-- TODO -->
-
----
-
-## 1.2 Why AI Moved to the Edge
-
-> *Why AI moved to the edge: privacy, latency, connectivity, cost*
-
-<!-- TODO -->
-
----
-
-## 1.3 The Four Constraint Categories
-
-> *The four constraint categories that govern every decision in this book: memory, compute, power, real-time*
-
-<!-- TODO -->
-
----
-
-## 1.4 The Design Space
-
-> *The design space: where embedded constraints and AI requirements collide*
-
-<!-- TODO -->
-
----
-
-## 1.5 Course Roadmap
-
-> *What the student will be able to do by the end*
-
-<!-- TODO -->
-
----
-
-## Worked Example: The Smart Doorbell Camera
-
-> *From server-side AI to on-device inference. What had to change and why.*
-
-<!-- TODO -->
+On November 12, 2019, a smart doorbell manufactured by a well-known home security company began draining its battery in forty-eight hours instead of the advertised six months. The doorbell had shipped with a firmware update three weeks earlier—an update that added person detection using an on-device neural network. The hardware hadn't changed. The battery capacity hadn't changed. The update added AI, and the product failed in production.
+The failure wasn't catastrophic. No one was injured. No homes were burgled because a doorbell died. But twelve thousand units were returned in the first month, support tickets flooded the company's queue, and the feature was rolled back by December. The engineering team had tested the AI model in isolation. They had verified its accuracy. They had confirmed it could run on the device's processor. What they hadn't done was measure how much power the model consumed during continuous operation, compare that consumption against the device's sleep/wake duty cycle, and project battery life under realistic deployment conditions.
+This is not a story about bad engineering. It's a story about integration without evaluation—about treating AI as software that happens to run on hardware, rather than as a design decision with resource consequences that must be quantified before deployment. The doorbell team knew how to design embedded systems. They knew how to integrate sensors, manage power budgets, and optimize firmware. But when AI entered the system, they treated the model as a black box: something that either "worked" or "didn't work," rather than something with a measurable cost in memory, compute cycles, power draw, and latency.
+This chapter establishes the problem that defines this entire book: artificial intelligence and embedded systems exist in tension, and that tension produces design constraints that cannot be ignored. By the end of this chapter, you will be able to describe why AI deployment on constrained hardware is not a technology trend but a design problem, distinguish between applications where on-device AI is necessary versus optional, and identify the four constraint categories—memory, compute, power, and real-time performance—that will determine whether any proposed AI integration is feasible.
+You are here because you need to make AI work on hardware that doesn't want to run it.
+What "Embedded" Means as a Constraint Environment
+An embedded system is not defined by what it is. It is defined by what it cannot do.
+A laptop can swap memory to disk when RAM runs out. A cloud server can autoscale compute resources when demand spikes. A desktop GPU can draw three hundred watts from a wall socket without consequence. An embedded system cannot do any of these things. It has the memory it shipped with. It has the processor it was designed around. It has a power budget determined by a battery, an energy harvester, or a constrained supply rail. When you exceed those limits, the system doesn't slow down gracefully—it fails.
+This is the first principle of embedded design: resources are fixed, and exceeding them is not recoverable. There is no elasticity. There is no "try again with more RAM." You design within the envelope or you don't deploy.
+The word "embedded" is often misused as a synonym for "small" or "low-cost" or "IoT device." These correlations exist, but they are not the definition. A Raspberry Pi 4 is not constrained in the same way an Arduino Nano 33 is constrained, even though both are "embedded" in casual usage. A Tesla's autopilot computer is embedded, but it has more compute power than most laptops. The defining characteristic of an embedded system is not size or cost—it is that the system has been purpose-built for a specific application, and its resources have been allocated with no overhead for generality.
+This matters because AI models are general-purpose artifacts. A neural network trained to detect faces doesn't "know" it's running on a battery-powered camera. It doesn't care whether the processor has a floating-point unit or whether SRAM is shared with the communication stack. The model's resource requirements are determined by its architecture—by the number of layers, the size of the weight matrices, the precision of the arithmetic—and those requirements are fixed when the model is trained. The embedded system, meanwhile, has its own fixed resource budget determined by cost, power, thermal, and application constraints.
+Integration is the design problem that emerges when you try to fit a fixed-resource-demand artifact into a fixed-resource-supply environment.
+Consider a wearable health monitor—a wristband that tracks heart rate, activity, and sleep. The device runs on a coin cell battery that must last at least fourteen days between charges. It has 256 KB of SRAM and 1 MB of flash memory. Its microcontroller runs at 64 MHz with no hardware floating-point unit. These constraints are not negotiable. They were set by industrial design (the device must be small and light), cost targets (coin cells are cheap, lithium-polymer packs are not), and user experience requirements (fourteen-day battery life is the competitive threshold).
+Now suppose you want to add on-device heart arrhythmia detection using a recurrent neural network. The model has been trained and achieves 94% accuracy on a validation dataset. It requires 180 KB of memory for weights, 60 KB for intermediate activations during inference, and performs 22 million multiply-accumulate operations per inference pass. The model runs. But does it fit?
+The memory budget is consumed: 180 KB for weights, 60 KB for activations, which leaves 16 KB for the rest of the firmware stack—sensor drivers, Bluetooth communication, user interface, and power management. That's tight, but possible with careful optimization. The compute budget is more problematic. At 64 MHz with no FPU, the processor can perform roughly 64 million integer operations per second—but floating-point operations require software emulation, which degrades throughput by a factor of ten or more. The 22 million multiply-accumulate operations become 220 million equivalent integer operations, which translates to roughly 3.4 seconds per inference pass. The model must run every thirty seconds to catch arrhythmia events, which means the processor is active for 3.4 seconds out of every 30-second window—an 11% duty cycle.
+That duty cycle determines power consumption. If the processor draws 15 mA when active and 5 µA when sleeping, the average current draw is 1.7 mA. A 220 mAh coin cell can sustain that for roughly 130 hours—five days, not fourteen. The integration fails the battery life constraint.
+This is not a hypothetical. Deployed wearables have failed this way. The failure mode is not that the model crashes or produces incorrect results. The failure mode is that the device works exactly as designed—and runs out of power too quickly to be useful.
+Embedded constraints are not bugs. They are the design space.
+Why AI Moved to the Edge
+If embedded systems are constrained and AI models are resource-intensive, the obvious solution is to avoid running AI on embedded systems. Send the data to a server. Let the cloud handle inference. Return the result over a network connection. This is the architecture that dominated the first wave of commercial AI applications: Alexa sends your voice to Amazon's servers, Google Photos runs recognition in the cloud, and autonomous vehicles upload sensor data for post-processing when connectivity allows.
+But that architecture has failed for an entire class of applications—and it's those applications that motivate this book.
+The failure modes are fourfold: latency, privacy, connectivity, and cost. Each one represents a constraint that cannot be relaxed by better server hardware, faster networks, or more efficient cloud infrastructure. They are fundamental to the application, not the implementation.
+Latency becomes a hard constraint when the time between sensing and action is measured in milliseconds. Consider an industrial robotic arm performing quality inspection on a production line moving at two meters per second. A visual defect detection model must classify each part before it moves out of the inspection zone—a window of roughly 100 milliseconds. If inference happens in the cloud, the round-trip latency includes sensor readout, network transmission, server queueing, inference execution, and result return. Even on a fast local network, that round-trip can exceed 50 milliseconds, leaving only 50 milliseconds for the physical inspection apparatus to respond. On a congested network or over a cellular backhaul, the latency balloons to hundreds of milliseconds, and the inspection window closes before the result returns. The application requires on-device inference not because the cloud is slow, but because the speed of light is finite and the application cannot wait for a photon to travel to a datacenter and back.
+Privacy becomes a hard constraint when the data itself cannot leave the device. Medical wearables that monitor cardiac rhythms or detect seizures handle protected health information governed by HIPAA in the United States and GDPR in Europe. Even if the user consents to cloud processing, the regulatory and liability risks of transmitting raw physiological data over a network often make cloud inference non-viable. The same constraint applies to home security cameras, workplace monitoring systems, and any application where the data has intrinsic sensitivity. On-device inference keeps the data local. The model runs where the sensor is, and only the classification result—not the raw input—leaves the device.
+Connectivity becomes a hard constraint when the network is intermittent, expensive, or absent. Agricultural sensors deployed in remote fields may have cellular connectivity only when a vehicle passes by. Underwater inspection drones operate with no real-time uplink. Disaster response robots enter environments where infrastructure has failed. These applications cannot assume network availability. The model must run locally because the alternative is not "slower inference"—it is "no inference."
+Cost becomes a hard constraint when network transmission dominates the operational budget. A smart parking sensor that sends a few bytes per hour—occupancy state, timestamp—can run for years on a coin cell. If that same sensor had to stream video to a cloud server for vehicle detection, the cellular data costs and power consumption would render the deployment economically infeasible. Even when connectivity exists, bandwidth has a price, and for low-margin, high-volume deployments, that price can exceed the cost of the hardware. On-device inference shifts compute cost from operational expense (recurring network charges) to capital expense (one-time hardware cost).
+These four constraints—latency, privacy, connectivity, and cost—define the boundary where cloud AI stops working and edge AI becomes necessary. But necessity is not the same as feasibility. An application may require on-device inference and still fail to achieve it because the embedded hardware cannot meet the model's resource demands. That gap—between what the application requires and what the hardware can deliver—is the design space this book teaches you to navigate.
+The Four Constraint Categories
+Every AI integration decision on embedded hardware is governed by four resource constraints: memory, compute, power, and real-time performance. These are not independent. They interact, trade off against each other, and create a multidimensional design space where satisfying one constraint can violate another. Understanding how to quantify each constraint and how they couple is the foundational skill of embedded AI design.
+Memory determines what you can store. A trained neural network is a large data structure—millions of weight parameters, layer configurations, and intermediate activation buffers. All of it must fit into the device's available memory. Embedded processors typically have two memory regions: flash (non-volatile storage for code and constant data) and SRAM (volatile storage for runtime variables and computation). Flash is abundant but slow and read-only during execution. SRAM is fast and writable but scarce—often measured in kilobytes, not megabytes. A model's weights can live in flash, but its activations must live in SRAM during inference. If the activation memory exceeds available SRAM, the model cannot run, regardless of how much flash you have.
+Compute determines how fast you can run. Inference is a sequence of mathematical operations—matrix multiplications, convolutions, activation functions—that must execute in a specific order. The time required to complete one inference pass is determined by the number of operations, the processor's throughput, and whether specialized hardware (like a floating-point unit or neural network accelerator) is available. Compute constraints manifest as latency: how long does it take to process one input and produce one output? For some applications, latency is soft—a delay of a few hundred milliseconds is acceptable. For others, latency is hard—exceeding the deadline means the result is useless.
+Power determines how long you can run. Every compute operation consumes energy. Every memory access consumes energy. Energy comes from a battery, an energy harvester, or a power supply with a limited budget. If your model's average power consumption exceeds the available power budget, the device's battery life shrinks below acceptable thresholds, the thermal envelope is violated, or the power supply cannot sustain the load. Power constraints are often the binding constraint for battery-powered devices. A model that fits in memory and meets latency requirements can still fail if it drains the battery too quickly.
+Real-time performance determines whether you can meet application deadlines. Real-time is not the same as "fast." A real-time system is one where correctness depends not just on the result but on when the result is delivered. A soft real-time system prefers to meet deadlines but can tolerate occasional misses. A hard real-time system must meet deadlines with provable guarantees—missing a deadline is a system failure. AI inference introduces variable latency: execution time can depend on input data, cache state, memory contention, and processor scheduling. For hard real-time applications, worst-case execution time must be bounded and proven, which is difficult when the model includes dynamic operations like attention mechanisms or conditional branches.
+These four constraints do not exist in isolation. Reducing memory usage by quantizing weights from 32-bit floats to 8-bit integers reduces memory footprint and speeds up inference (fewer bytes to move), but may degrade model accuracy. Offloading inference to a hardware accelerator reduces latency and power consumption but introduces integration complexity and may increase cost. Running inference at a lower duty cycle (less frequently) reduces average power but increases latency between sensing and action. Every design decision in embedded AI is a trade-off between these constraints, and the designer who cannot quantify the trade-offs cannot make informed decisions.
+The Design Space: Where Embedded Constraints and AI Requirements Collide
+The design space for embedded AI is defined by the intersection of two surfaces: what the model demands and what the hardware can supply. When those surfaces overlap, deployment is feasible. When they don't, the designer must modify one or both.
+Consider a keyword spotting application—a voice-activated interface that listens for a wake word like "Hey, device" and triggers a response. The model is a convolutional neural network trained on audio spectrograms. It has 42,000 parameters, requires 180 KB of memory (model weights plus activation buffers), and performs 1.8 million operations per inference pass. Inference must complete within 100 milliseconds to feel responsive, and the device runs on a 1000 mAh lithium-ion battery that must last at least one week with continuous listening.
+Now consider two hardware targets.
+Target A is a low-power ARM Cortex-M4 microcontroller running at 80 MHz with 256 KB of SRAM and a hardware floating-point unit. It draws 20 mA when active and 10 µA when sleeping. Flash storage is 1 MB. Cost is $3 per unit.
+Target B is an ARM Cortex-M0+ microcontroller running at 48 MHz with 32 KB of SRAM and no FPU. It draws 8 mA when active and 2 µA when sleeping. Flash storage is 256 KB. Cost is $0.80 per unit.
+Does the model fit on Target A? The memory constraint is satisfied: 180 KB required, 256 KB available. The compute constraint requires calculation. With an FPU, the processor can sustain roughly 80 million floating-point operations per second (FLOPS). The model requires 1.8 million operations, so inference time is approximately 22 milliseconds—well within the 100 ms latency budget. Power consumption depends on duty cycle. If the model runs continuously (inference every 100 ms), the processor is active 22% of the time. Average current draw is 4.4 mA, which gives a battery life of roughly 227 hours, or nine days. The model fits—barely. The battery life is tighter than the one-week target, but close enough to be acceptable with optimization.
+Does the model fit on Target B? The memory constraint fails immediately: 180 KB required, 32 KB available. Even if you could compress the model to fit, the compute constraint likely fails as well. Without an FPU, floating-point operations are emulated in software, reducing throughput by a factor of ten or more. The 1.8 million operations would take 375 milliseconds or longer, violating the 100 ms latency requirement. Target B cannot run this model as-is.
+But Target B is one-quarter the cost of Target A. For a consumer product with tight margins and high production volume, that cost difference is decisive. The designer now faces a choice: reject Target B and accept higher unit cost, or modify the model to fit Target B's constraints. Modifying the model might mean quantizing weights to 8-bit integers (reducing memory and enabling integer-only inference), pruning layers to reduce operation count, or switching to a smaller architecture like a depthwise separable convolution network. Each modification changes the model's accuracy, and if accuracy drops below the application's threshold, the model becomes useless regardless of cost savings.
+This is the design space. You have a model with fixed resource demands and a hardware target with fixed resource supply. You have an application with minimum accuracy, latency, and battery life requirements. Your job is to find a configuration where all constraints are satisfied simultaneously—or prove that no such configuration exists and change the requirements.
+The Structure of This Course
+This book teaches you to navigate that design space by building the evaluation tools in deliberate sequence.
+Part I (Chapters 1–3) establishes the problem. You now know why embedded AI is a constrained optimization problem. Chapter 2 quantifies each constraint category precisely—how to read datasheets, how to calculate memory footprints, how to translate processor specs into inference throughput. Chapter 3 builds your ML literacy at the level needed to reason about inference without needing to train models—what happens during a forward pass, how architectures map to resource demands, and which model classes are appropriate for which embedded sensing tasks.
+Part II (Chapters 4–10) builds the diagnostic toolkit. Each chapter adds one constraint dimension and teaches you to evaluate AI integration against that dimension. By the end of Part II, you can audit a proposed deployment and identify every constraint failure before writing a line of code.
+Part III (Chapters 11–14) extends the toolkit into model-aware design. The model is no longer fixed—it becomes a design variable. You learn to select architectures for deployment constraints, compress models through quantization and pruning, and navigate the toolchains that convert trained models into firmware. The final chapter synthesizes everything through three full case studies—industrial anomaly detection, medical wearable design, and agricultural edge sensing—where you apply the complete decision framework to real deployment problems.
+The skill you will have at the end is this: given a sensing task, an application requirement, and a hardware target, you can determine whether AI integration is feasible, select a model and deployment strategy, justify every decision against resource constraints, and document the trade-offs you made and the alternatives you rejected.
+That skill does not make you a machine learning researcher. It does not make you an embedded systems architect. It makes you a systems integrator who can reason across both domains—and that is the role the industry needs and currently lacks.
+What You Cannot Learn from This Book Alone
+This book teaches evaluation and integration, not invention. It assumes you can obtain a trained model—from a colleague, a model zoo, a vendor library, or a pre-trained architecture. It does not teach you how to train models from scratch, how to collect and label training datasets, or how to design novel neural network architectures. Those are machine learning skills, and they are taught in machine learning courses.
+It also assumes you have working knowledge of embedded systems fundamentals—digital logic, microcontroller programming in C or C++, basic real-time concepts, and familiarity with datasheets. If you lack that foundation, Appendix A provides a quick reference, but it is not a substitute for a proper embedded systems course.
+What this book does teach—what no other book currently teaches—is how to evaluate the collision between ML models and embedded constraints, how to make integration decisions that survive deployment, and how to document those decisions so that future engineers (including future you) understand why the system is designed the way it is.
+The doorbell camera that opened this chapter failed because the integration decision was not evaluated. The model worked. The hardware worked. But the system—the model running on that hardware under realistic operating conditions—did not work. The failure was not a software bug. It was a design error: a decision made without quantifying its resource consequences.
+This book teaches you not to make that error.
+You start by learning to quantify constraints—which is what Chapter 2 does next.
 
 ---
 
-## Summary
-
-<!-- TODO -->
-
----
-
-## Review Questions
-
-1. <!-- TODO -->
-2. <!-- TODO -->
-3. <!-- TODO -->
-
----
-
-*Next: [Chapter 2 — Embedded Constraints as Design Variables](./chapter-02-embedded-constraints-as-design-variables.md)*
+*[Table of Contents](../README.md) | [Chapter 2 →](./chapter-02-embedded-constraints-as-design-variables.md)*
