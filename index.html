@@ -4,354 +4,605 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Embedded AI — Book Reader</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://unpkg.com/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    :root {
+      --bg: #1a1208;
+      --sidebar-bg: #120d05;
+      --page-bg: #fdf8f0;
+      --page-shadow: rgba(0,0,0,0.7);
+      --ink: #1a1208;
+      --accent: #8b4513;
+      --gold: #c8922a;
+      --sidebar-text: #c8a96e;
+      --sidebar-hover: rgba(200,169,110,0.12);
+      --sidebar-active: rgba(200,169,110,0.22);
+    }
+
     body {
-      background: radial-gradient(ellipse at center, #2c1810 0%, #0d0d0d 100%);
-      min-height: 100vh;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      font-family: 'Georgia', serif;
+      color: var(--ink);
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 280px;
+      min-width: 280px;
+      background: var(--sidebar-bg);
       display: flex;
       flex-direction: column;
-      align-items: center;
-      font-family: 'Georgia', serif;
-      overflow-x: hidden;
+      border-right: 1px solid rgba(200,169,110,0.15);
+      overflow: hidden;
     }
 
-    header {
-      width: 100%;
-      text-align: center;
-      padding: 20px;
-      color: #d4a853;
-      font-size: 1.5rem;
-      letter-spacing: 3px;
-      text-transform: uppercase;
-      text-shadow: 0 0 20px rgba(212,168,83,0.5);
+    #sidebar-header {
+      padding: 24px 20px 16px;
+      border-bottom: 1px solid rgba(200,169,110,0.15);
     }
 
-    header span {
-      font-size: 0.8rem;
-      color: #888;
-      display: block;
+    #sidebar-header h1 {
+      color: var(--gold);
+      font-size: 1rem;
       letter-spacing: 2px;
-      margin-top: 4px;
+      text-transform: uppercase;
+      line-height: 1.4;
     }
 
-    /* Wooden desk background */
-    #desk {
+    #sidebar-header p {
+      color: #6b5533;
+      font-size: 0.7rem;
+      margin-top: 4px;
+      letter-spacing: 1px;
+    }
+
+    #sidebar-search {
+      padding: 10px 16px;
+      border-bottom: 1px solid rgba(200,169,110,0.1);
+    }
+
+    #sidebar-search input {
       width: 100%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(200,169,110,0.2);
+      border-radius: 4px;
+      color: var(--sidebar-text);
+      padding: 6px 10px;
+      font-size: 0.8rem;
+      outline: none;
+    }
+
+    #sidebar-search input::placeholder { color: #4a3a22; }
+
+    #chapter-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+      scrollbar-width: thin;
+      scrollbar-color: #3a2a10 transparent;
+    }
+
+    .part-label {
+      color: #6b5533;
+      font-size: 0.65rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 12px 20px 4px;
+    }
+
+    .chapter-item {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 7px 20px;
+      cursor: pointer;
+      color: #a07848;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      transition: background 0.15s, color 0.15s;
+      border-left: 2px solid transparent;
+    }
+
+    .chapter-item:hover {
+      background: var(--sidebar-hover);
+      color: var(--sidebar-text);
+    }
+
+    .chapter-item.active {
+      background: var(--sidebar-active);
+      color: var(--gold);
+      border-left-color: var(--gold);
+    }
+
+    .chapter-num {
+      color: #5a4020;
+      font-size: 0.65rem;
+      min-width: 20px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .chapter-item.active .chapter-num { color: var(--gold); }
+
+    /* ── Main area ── */
+    #main {
       flex: 1;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      background:
-        repeating-linear-gradient(
-          92deg,
-          transparent,
-          transparent 80px,
-          rgba(0,0,0,0.03) 80px,
-          rgba(0,0,0,0.03) 82px
-        ),
-        linear-gradient(180deg, #3d2010 0%, #2a1508 100%);
-      box-shadow: inset 0 10px 30px rgba(0,0,0,0.5);
-    }
-
-    #book-container {
-      position: relative;
-      filter: drop-shadow(0 20px 60px rgba(0,0,0,0.8));
-    }
-
-    /* Page flip canvas pages */
-    .page {
-      background: #fdf8f0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       overflow: hidden;
+      background: radial-gradient(ellipse at 50% 0%, #2c1a08 0%, #0d0800 100%);
     }
 
-    .page canvas {
-      display: block;
-      max-width: 100%;
-      max-height: 100%;
-    }
-
-    .page-cover {
-      background: linear-gradient(135deg, #1a0a00 0%, #3d1c00 40%, #1a0a00 100%);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: #d4a853;
-      text-align: center;
-      padding: 40px;
-    }
-
-    .page-cover h1 {
-      font-size: clamp(1rem, 3vw, 2rem);
-      letter-spacing: 4px;
-      text-transform: uppercase;
-      border-top: 1px solid #d4a853;
-      border-bottom: 1px solid #d4a853;
-      padding: 16px 24px;
-      margin-bottom: 20px;
-    }
-
-    .page-cover p {
-      font-size: clamp(0.7rem, 1.5vw, 0.9rem);
-      color: #a07840;
-      letter-spacing: 2px;
-    }
-
-    .page-cover .cover-ornament {
-      font-size: clamp(2rem, 5vw, 4rem);
-      margin-bottom: 24px;
-      color: #d4a853;
-    }
-
-    .page-back-cover {
-      background: linear-gradient(135deg, #1a0a00 0%, #2e1500 100%);
-    }
-
-    /* Loading overlay */
-    #loading {
-      position: fixed;
-      inset: 0;
-      background: #0d0d0d;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 999;
-      transition: opacity 0.5s;
-    }
-
-    #loading p { color: #d4a853; font-size: 1.1rem; margin-top: 16px; letter-spacing: 2px; }
-
-    .spinner {
-      width: 52px; height: 52px;
-      border: 4px solid #333;
-      border-top-color: #d4a853;
-      border-radius: 50%;
-      animation: spin 0.9s linear infinite;
-    }
-
-    #progress-bar {
-      width: 200px; height: 4px;
-      background: #333;
-      border-radius: 2px;
-      margin-top: 12px;
-      overflow: hidden;
-    }
-
-    #progress-fill {
-      height: 100%;
-      background: #d4a853;
-      width: 0%;
-      transition: width 0.2s;
-      border-radius: 2px;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* Controls */
-    #controls {
+    #topbar {
       display: flex;
       align-items: center;
-      gap: 16px;
-      padding: 16px;
-      color: #d4a853;
-      font-size: 0.85rem;
-      letter-spacing: 1px;
+      gap: 12px;
+      padding: 10px 24px;
+      border-bottom: 1px solid rgba(200,169,110,0.1);
+      background: rgba(0,0,0,0.3);
     }
 
-    .ctrl-btn {
-      background: rgba(212,168,83,0.15);
-      border: 1px solid #d4a853;
-      color: #d4a853;
-      padding: 8px 20px;
+    #topbar button {
+      background: transparent;
+      border: 1px solid rgba(200,169,110,0.3);
+      color: var(--gold);
+      padding: 5px 14px;
       border-radius: 3px;
       cursor: pointer;
       font-family: 'Georgia', serif;
-      font-size: 0.85rem;
-      letter-spacing: 1px;
-      transition: all 0.2s;
+      font-size: 0.8rem;
+      transition: all 0.15s;
     }
 
-    .ctrl-btn:hover { background: rgba(212,168,83,0.3); }
-    .ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    #topbar button:hover { background: rgba(200,169,110,0.15); }
+    #topbar button:disabled { opacity: 0.25; cursor: not-allowed; }
 
-    #page-display { min-width: 120px; text-align: center; }
-
-    footer {
-      color: #444;
-      font-size: 0.7rem;
-      padding: 12px;
+    #chapter-title-bar {
+      flex: 1;
+      color: #6b5533;
+      font-size: 0.78rem;
       letter-spacing: 1px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    /* Hint */
-    #hint {
-      color: #665533;
-      font-size: 0.75rem;
+    /* ── Book page ── */
+    #book-scroll {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      justify-content: center;
+      padding: 40px 24px 60px;
+      scrollbar-width: thin;
+      scrollbar-color: #3a2a10 transparent;
+    }
+
+    #page {
+      background: var(--page-bg);
+      width: 100%;
+      max-width: 720px;
+      min-height: 100%;
+      border-radius: 2px;
+      box-shadow:
+        -6px 0 20px rgba(0,0,0,0.5),
+        6px 0 20px rgba(0,0,0,0.5),
+        0 8px 40px rgba(0,0,0,0.6);
+      padding: 64px 72px;
+      position: relative;
+    }
+
+    /* Spine line */
+    #page::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 5px;
+      background: linear-gradient(to right, #8b6020, #d4a860, #a07030);
+      border-radius: 2px 0 0 2px;
+    }
+
+    /* Page texture */
+    #page::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 27px,
+          rgba(180,140,80,0.04) 27px,
+          rgba(180,140,80,0.04) 28px
+        );
+      pointer-events: none;
+      border-radius: 2px;
+    }
+
+    /* ── Markdown styles ── */
+    #page-content { position: relative; z-index: 1; }
+
+    #page-content h1 {
+      font-size: 1.8rem;
+      color: #2a1a08;
+      border-bottom: 2px solid var(--gold);
+      padding-bottom: 12px;
       margin-bottom: 8px;
-      letter-spacing: 1px;
+      line-height: 1.3;
     }
+
+    #page-content h1 + p em {
+      color: #6b4a20;
+      font-size: 0.95rem;
+    }
+
+    #page-content h2 {
+      font-size: 1.2rem;
+      color: #3a2008;
+      margin-top: 36px;
+      margin-bottom: 10px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(139,69,19,0.2);
+    }
+
+    #page-content h3 {
+      font-size: 1rem;
+      color: #4a2a0a;
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+
+    #page-content p {
+      color: #2a1a08;
+      line-height: 1.85;
+      margin-bottom: 14px;
+      font-size: 0.98rem;
+    }
+
+    #page-content ul, #page-content ol {
+      padding-left: 24px;
+      margin-bottom: 14px;
+    }
+
+    #page-content li {
+      color: #2a1a08;
+      line-height: 1.75;
+      font-size: 0.97rem;
+      margin-bottom: 4px;
+    }
+
+    #page-content strong { color: #1a0a00; }
+
+    #page-content blockquote {
+      border-left: 3px solid var(--gold);
+      margin: 20px 0;
+      padding: 10px 20px;
+      background: rgba(200,146,42,0.06);
+      border-radius: 0 4px 4px 0;
+      font-style: italic;
+      color: #5a3a10;
+    }
+
+    #page-content blockquote p { margin-bottom: 0; color: #5a3a10; }
+
+    #page-content code {
+      background: rgba(0,0,0,0.06);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.88em;
+      color: #8b2500;
+    }
+
+    #page-content pre {
+      background: #1a1208;
+      border-radius: 6px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      margin: 20px 0;
+      border-left: 3px solid var(--gold);
+    }
+
+    #page-content pre code {
+      background: transparent;
+      color: #d4c090;
+      font-size: 0.87rem;
+      padding: 0;
+    }
+
+    #page-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 0.88rem;
+    }
+
+    #page-content th {
+      background: rgba(139,69,19,0.12);
+      color: #3a1a00;
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 2px solid rgba(139,69,19,0.3);
+    }
+
+    #page-content td {
+      padding: 7px 12px;
+      border-bottom: 1px solid rgba(139,69,19,0.1);
+      color: #2a1a08;
+    }
+
+    #page-content tr:hover td { background: rgba(200,169,110,0.06); }
+
+    #page-content a { color: var(--accent); text-decoration: none; }
+    #page-content a:hover { text-decoration: underline; }
+
+    #page-content hr {
+      border: none;
+      border-top: 1px solid rgba(139,69,19,0.2);
+      margin: 32px 0;
+    }
+
+    /* TODO comments hidden visually but visible in source */
+    #page-content .todo-note {
+      background: #fff8e6;
+      border: 1px dashed #c8922a;
+      border-radius: 4px;
+      padding: 8px 14px;
+      color: #8b6020;
+      font-size: 0.82rem;
+      font-style: italic;
+      margin: 10px 0;
+    }
+
+    /* Loading */
+    #loading-page {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: #8b6020;
+      font-style: italic;
+    }
+
+    /* Cover page */
+    #cover {
+      text-align: center;
+      padding: 60px 40px;
+    }
+
+    #cover .ornament { font-size: 3rem; color: var(--gold); margin-bottom: 32px; }
+
+    #cover h1 {
+      font-size: 2.2rem;
+      color: #1a0a00;
+      border: none;
+      border-top: 2px solid var(--gold);
+      border-bottom: 2px solid var(--gold);
+      padding: 16px 0;
+      margin-bottom: 20px;
+      letter-spacing: 2px;
+    }
+
+    #cover .subtitle {
+      color: #6b4a20;
+      font-size: 1rem;
+      font-style: italic;
+      margin-bottom: 32px;
+    }
+
+    #cover .meta {
+      color: #8b6020;
+      font-size: 0.82rem;
+      line-height: 2;
+    }
+
+    #cover .start-btn {
+      display: inline-block;
+      margin-top: 40px;
+      background: var(--accent);
+      color: #fdf8f0;
+      padding: 12px 32px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      letter-spacing: 1px;
+      border: none;
+      font-family: 'Georgia', serif;
+      transition: background 0.2s;
+    }
+
+    #cover .start-btn:hover { background: #6b3010; }
   </style>
 </head>
 <body>
 
-<div id="loading">
-  <div class="spinner"></div>
-  <p>Opening book...</p>
-  <div id="progress-bar"><div id="progress-fill"></div></div>
-</div>
+<!-- Sidebar -->
+<nav id="sidebar">
+  <div id="sidebar-header">
+    <h1>Embedded Systems &amp; AI</h1>
+    <p>Working Draft v0.1</p>
+  </div>
+  <div id="sidebar-search">
+    <input type="text" id="search" placeholder="Search chapters..." />
+  </div>
+  <div id="chapter-list"></div>
+</nav>
 
-<header>
-  Embedded AI
-  <span>A Complete Guide</span>
-</header>
-
-<div id="desk">
-  <div id="hint">Click the page edges or drag to turn pages</div>
-  <div id="book-container"></div>
-  <div id="controls">
-    <button class="ctrl-btn" id="btn-prev">&#8592; Prev</button>
-    <span id="page-display">— / —</span>
-    <button class="ctrl-btn" id="btn-next">Next &#8594;</button>
+<!-- Main -->
+<div id="main">
+  <div id="topbar">
+    <button id="btn-prev">&#8592; Prev</button>
+    <div id="chapter-title-bar">—</div>
+    <button id="btn-next">Next &#8594;</button>
+  </div>
+  <div id="book-scroll">
+    <div id="page">
+      <div id="page-content">
+        <div id="cover">
+          <div class="ornament">&#9670;</div>
+          <h1>Embedded Systems &amp; AI</h1>
+          <p class="subtitle">Constraints, Inference, and Integration</p>
+          <div class="meta">
+            Version 0.1 — Working Draft<br>
+            15-week Course Textbook<br>
+            ECE / CS — Final Year Undergraduate
+          </div>
+          <button class="start-btn" id="cover-start">Begin Reading &#8594;</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
-<footer>Use arrow keys or click page edges to navigate</footer>
-
 <script>
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const CHAPTERS = [
+  { label: 'Cover', file: null, num: '', part: null },
+  { label: 'Part I — The Embedded-AI Problem', file: null, num: '', part: true },
+  { label: 'When AI Meets Constrained Hardware', file: 'chapters/chapter-01-when-ai-meets-constrained-hardware.md', num: '1' },
+  { label: 'Embedded Constraints as Design Variables', file: 'chapters/chapter-02-embedded-constraints-as-design-variables.md', num: '2' },
+  { label: 'Machine Learning for Embedded Engineers', file: 'chapters/chapter-03-ml-for-embedded-engineers.md', num: '3' },
+  { label: 'Part II — Inference-First Evaluation', file: null, num: '', part: true },
+  { label: 'Inference Mechanics', file: 'chapters/chapter-04-inference-mechanics.md', num: '4' },
+  { label: 'Memory: Constrained Spaces', file: 'chapters/chapter-05-memory.md', num: '5' },
+  { label: 'Compute: Latency & Throughput', file: 'chapters/chapter-06-compute.md', num: '6' },
+  { label: 'Power and Energy', file: 'chapters/chapter-07-power-and-energy.md', num: '7' },
+  { label: 'Hardware for AI', file: 'chapters/chapter-08-hardware-for-ai.md', num: '8' },
+  { label: 'Communication & Edge-Cloud', file: 'chapters/chapter-09-communication-edge-cloud.md', num: '9' },
+  { label: 'Real-Time AI', file: 'chapters/chapter-10-real-time-ai.md', num: '10' },
+  { label: 'Part III — Model-Aware Design', file: null, num: '', part: true },
+  { label: 'Selecting Models', file: 'chapters/chapter-11-model-selection.md', num: '11' },
+  { label: 'Optimizing Models', file: 'chapters/chapter-12-model-optimization.md', num: '12' },
+  { label: 'TinyML Toolchains', file: 'chapters/chapter-13-tinyml-toolchains.md', num: '13' },
+  { label: 'Integration Case Studies', file: 'chapters/chapter-14-integration-case-studies.md', num: '14' },
+  { label: 'Appendices', file: null, num: '', part: true },
+  { label: 'Appendix A — Embedded Reference', file: 'chapters/appendix-a-embedded-quick-reference.md', num: 'A' },
+  { label: 'Appendix B — ML Reference', file: 'chapters/appendix-b-ml-quick-reference.md', num: 'B' },
+  { label: 'Appendix C — Hardware Reference', file: 'chapters/appendix-c-hardware-reference.md', num: 'C' },
+  { label: 'Appendix D — Toolchain Setup', file: 'chapters/appendix-d-toolchain-setup.md', num: 'D' },
+];
 
-  const PDF_URL = './Embedded_AI_Book.pdf';
+// Navigable items (have files or are cover)
+const navItems = CHAPTERS.map((c, i) => ({ ...c, idx: i })).filter(c => !c.part);
 
-  // Determine page size based on screen
-  const maxW = Math.min(window.innerWidth * 0.45, 480);
-  const PAGE_W = Math.floor(maxW);
-  const PAGE_H = Math.floor(PAGE_W * 1.414); // A4 ratio
+let currentNavIdx = 0; // index into navItems
 
-  async function buildBook() {
-    const pdf = await pdfjsLib.getDocument(PDF_URL).promise;
-    const totalPages = pdf.numPages;
-    const fill = document.getElementById('progress-fill');
+// Build sidebar
+const list = document.getElementById('chapter-list');
 
-    // Pre-render all pages to canvases
-    const renderedCanvases = [];
+CHAPTERS.forEach((ch, i) => {
+  if (ch.part) {
+    const div = document.createElement('div');
+    div.className = 'part-label';
+    div.textContent = ch.label;
+    list.appendChild(div);
+    return;
+  }
+  const div = document.createElement('div');
+  div.className = 'chapter-item';
+  div.dataset.idx = i;
+  div.innerHTML = `<span class="chapter-num">${ch.num}</span><span>${ch.label}</span>`;
+  div.addEventListener('click', () => {
+    const ni = navItems.findIndex(n => n.idx === i);
+    if (ni !== -1) loadNavItem(ni);
+  });
+  list.appendChild(div);
+});
 
-    for (let i = 1; i <= totalPages; i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1 });
-      const scale = Math.min(PAGE_W / viewport.width, PAGE_H / viewport.height);
-      const scaledVP = page.getViewport({ scale });
+function setActiveItem(chapIdx) {
+  document.querySelectorAll('.chapter-item').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.idx) === chapIdx);
+  });
+}
 
-      const c = document.createElement('canvas');
-      c.width = scaledVP.width;
-      c.height = scaledVP.height;
-      await page.render({ canvasContext: c.getContext('2d'), viewport: scaledVP }).promise;
-      renderedCanvases.push(c);
+async function loadNavItem(ni) {
+  currentNavIdx = ni;
+  const ch = navItems[ni];
+  setActiveItem(ch.idx);
 
-      fill.style.width = ((i / totalPages) * 100) + '%';
-    }
+  document.getElementById('btn-prev').disabled = ni === 0;
+  document.getElementById('btn-next').disabled = ni === navItems.length - 1;
+  document.getElementById('chapter-title-bar').textContent = ch.file ? `${ch.num ? 'Ch. ' + ch.num + ' — ' : ''}${ch.label}` : ch.label;
 
-    // Build page elements for StPageFlip
-    const container = document.getElementById('book-container');
+  const content = document.getElementById('page-content');
+  document.getElementById('book-scroll').scrollTo({ top: 0 });
 
-    // StPageFlip needs a div with children .page elements
-    const bookDiv = document.createElement('div');
-    bookDiv.id = 'flipbook';
-    container.appendChild(bookDiv);
-
-    // Front cover
-    const cover = document.createElement('div');
-    cover.className = 'page page-cover';
-    cover.innerHTML = `
-      <div class="cover-ornament">&#9670;</div>
-      <h1>Embedded AI</h1>
-      <p>A Complete Guide to AI on Edge Devices</p>
-    `;
-    bookDiv.appendChild(cover);
-
-    // PDF pages
-    renderedCanvases.forEach(c => {
-      const pageDiv = document.createElement('div');
-      pageDiv.className = 'page';
-      pageDiv.style.background = '#fdf8f0';
-      pageDiv.appendChild(c);
-      bookDiv.appendChild(pageDiv);
-    });
-
-    // Back cover
-    const backCover = document.createElement('div');
-    backCover.className = 'page page-cover page-back-cover';
-    backCover.innerHTML = `<div class="cover-ornament">&#9670;</div><p>Embedded AI</p>`;
-    bookDiv.appendChild(backCover);
-
-    // Init StPageFlip
-    const PageFlipLib = window.St ? window.St.PageFlip : window.PageFlip;
-    const pageFlip = new PageFlipLib(bookDiv, {
-      width: PAGE_W,
-      height: PAGE_H,
-      size: 'fixed',
-      minWidth: PAGE_W,
-      maxWidth: PAGE_W,
-      minHeight: PAGE_H,
-      maxHeight: PAGE_H,
-      showCover: true,
-      mobileScrollSupport: false,
-      drawShadow: true,
-      flippingTime: 700,
-      usePortrait: false,
-      startZIndex: 0,
-      autoSize: false,
-      maxShadowOpacity: 0.5,
-      showPageCount: false,
-      clickEventForward: true,
-    });
-
-    pageFlip.loadFromHTML(bookDiv.querySelectorAll('.page'));
-
-    // Controls
-    const pageDisplay = document.getElementById('page-display');
-    const btnPrev = document.getElementById('btn-prev');
-    const btnNext = document.getElementById('btn-next');
-
-    function updateDisplay() {
-      const cur = pageFlip.getCurrentPageIndex();
-      const total = pageFlip.getPageCount();
-      pageDisplay.textContent = `${cur + 1} / ${total}`;
-      btnPrev.disabled = cur === 0;
-      btnNext.disabled = cur >= total - 1;
-    }
-
-    pageFlip.on('flip', updateDisplay);
-    pageFlip.on('init', updateDisplay);
-
-    btnPrev.addEventListener('click', () => pageFlip.flipPrev());
-    btnNext.addEventListener('click', () => pageFlip.flipNext());
-
-    document.addEventListener('keydown', e => {
-      if (e.key === 'ArrowRight') pageFlip.flipNext();
-      if (e.key === 'ArrowLeft') pageFlip.flipPrev();
-    });
-
-    // Hide loading
-    const loadingEl = document.getElementById('loading');
-    loadingEl.style.opacity = '0';
-    setTimeout(() => loadingEl.style.display = 'none', 500);
+  if (!ch.file) {
+    // Cover
+    content.innerHTML = `
+      <div id="cover">
+        <div class="ornament">&#9670;</div>
+        <h1>Embedded Systems &amp; AI</h1>
+        <p class="subtitle">Constraints, Inference, and Integration</p>
+        <div class="meta">
+          Version 0.1 — Working Draft<br>
+          15-week Course Textbook<br>
+          ECE / CS — Final Year Undergraduate
+        </div>
+        <button class="start-btn" id="cover-start">Begin Reading &#8594;</button>
+      </div>`;
+    document.getElementById('cover-start').addEventListener('click', () => loadNavItem(1));
+    return;
   }
 
-  buildBook().catch(err => {
-    document.getElementById('loading').innerHTML =
-      `<p style="color:#e94560;padding:20px">Failed to load: ${err.message}</p>`;
+  content.innerHTML = '<div id="loading-page">Loading chapter...</div>';
+
+  try {
+    const res = await fetch(ch.file);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    let md = await res.text();
+
+    // Strip HTML comments (<!-- TODO --> etc) but show as styled notes
+    md = md.replace(/<!--\s*TODO[^>]*-->/g, '<div class="todo-note">✎ Section pending — contributions welcome. See <a href="https://github.com/Aditi-2903/Embedded_AI/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></div>');
+
+    const html = marked.parse(md);
+    content.innerHTML = html;
+
+    // Make internal .md links work
+    content.querySelectorAll('a[href$=".md"]').forEach(a => {
+      const href = a.getAttribute('href');
+      const match = href.match(/chapter-(\d+)|appendix-([a-d])/i);
+      if (match) {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          const target = navItems.findIndex(n => n.file && n.file.includes(href.replace('./', '').replace('../', '')));
+          if (target !== -1) loadNavItem(target);
+        });
+      }
+    });
+  } catch (e) {
+    content.innerHTML = `<p style="color:#c0392b;padding:20px">Could not load chapter: ${e.message}</p>`;
+  }
+}
+
+document.getElementById('btn-prev').addEventListener('click', () => loadNavItem(currentNavIdx - 1));
+document.getElementById('btn-next').addEventListener('click', () => loadNavItem(currentNavIdx + 1));
+document.getElementById('cover-start').addEventListener('click', () => loadNavItem(1));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { if (currentNavIdx < navItems.length - 1) loadNavItem(currentNavIdx + 1); }
+  if (e.key === 'ArrowLeft')  { if (currentNavIdx > 0) loadNavItem(currentNavIdx - 1); }
+});
+
+// Search
+document.getElementById('search').addEventListener('input', e => {
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll('.chapter-item').forEach(el => {
+    el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
+  document.querySelectorAll('.part-label').forEach(el => {
+    el.style.display = q ? 'none' : '';
+  });
+});
+
+// Init: show cover selected
+setActiveItem(0);
+document.getElementById('btn-prev').disabled = true;
 </script>
 </body>
 </html>
