@@ -1,161 +1,204 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Embedded AI Book</title>
+  <title>Embedded AI — Book Reader</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/StPageFlip/2.0.7/page-flip.browser.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background: #1a1a2e;
-      font-family: 'Segoe UI', sans-serif;
-      color: #eee;
+      background: radial-gradient(ellipse at center, #2c1810 0%, #0d0d0d 100%);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
+      align-items: center;
+      font-family: 'Georgia', serif;
+      overflow-x: hidden;
     }
 
     header {
-      background: #16213e;
-      padding: 16px 32px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-    }
-
-    header h1 {
-      font-size: 1.3rem;
-      color: #e94560;
-      letter-spacing: 1px;
-    }
-
-    #page-info {
-      font-size: 0.9rem;
-      color: #aaa;
-    }
-
-    #toolbar {
-      background: #0f3460;
-      padding: 10px 32px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    button {
-      background: #e94560;
-      color: white;
-      border: none;
-      padding: 8px 18px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      transition: background 0.2s;
-    }
-
-    button:hover { background: #c73652; }
-    button:disabled { background: #555; cursor: not-allowed; }
-
-    #page-input {
-      width: 60px;
-      padding: 7px 10px;
-      border-radius: 6px;
-      border: 1px solid #444;
-      background: #1a1a2e;
-      color: #eee;
+      width: 100%;
       text-align: center;
-      font-size: 0.9rem;
+      padding: 20px;
+      color: #d4a853;
+      font-size: 1.5rem;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      text-shadow: 0 0 20px rgba(212,168,83,0.5);
     }
 
-    label { font-size: 0.9rem; color: #ccc; }
-
-    #zoom-select {
-      padding: 7px 10px;
-      border-radius: 6px;
-      border: 1px solid #444;
-      background: #1a1a2e;
-      color: #eee;
-      font-size: 0.9rem;
+    header span {
+      font-size: 0.8rem;
+      color: #888;
+      display: block;
+      letter-spacing: 2px;
+      margin-top: 4px;
     }
 
-    #canvas-container {
+    /* Wooden desk background */
+    #desk {
+      width: 100%;
       flex: 1;
-      display: flex;
-      justify-content: center;
-      align-items: flex-start;
-      padding: 32px 16px;
-      overflow: auto;
-    }
-
-    #book-wrapper {
-      background: white;
-      border-radius: 4px;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.6), -4px 0 12px rgba(0,0,0,0.3);
-      position: relative;
-      transition: box-shadow 0.3s;
-    }
-
-    /* spine effect */
-    #book-wrapper::before {
-      content: '';
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 6px;
-      background: linear-gradient(to right, #888, #ddd, #aaa);
-      border-radius: 4px 0 0 4px;
-    }
-
-    canvas { display: block; }
-
-    #loading {
-      position: fixed;
-      inset: 0;
-      background: rgba(26,26,46,0.9);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      font-size: 1.1rem;
-      gap: 16px;
-      z-index: 100;
+      padding: 20px;
+      background:
+        repeating-linear-gradient(
+          92deg,
+          transparent,
+          transparent 80px,
+          rgba(0,0,0,0.03) 80px,
+          rgba(0,0,0,0.03) 82px
+        ),
+        linear-gradient(180deg, #3d2010 0%, #2a1508 100%);
+      box-shadow: inset 0 10px 30px rgba(0,0,0,0.5);
     }
 
+    #book-container {
+      position: relative;
+      filter: drop-shadow(0 20px 60px rgba(0,0,0,0.8));
+    }
+
+    /* Page flip canvas pages */
+    .page {
+      background: #fdf8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .page canvas {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    .page-cover {
+      background: linear-gradient(135deg, #1a0a00 0%, #3d1c00 40%, #1a0a00 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #d4a853;
+      text-align: center;
+      padding: 40px;
+    }
+
+    .page-cover h1 {
+      font-size: clamp(1rem, 3vw, 2rem);
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      border-top: 1px solid #d4a853;
+      border-bottom: 1px solid #d4a853;
+      padding: 16px 24px;
+      margin-bottom: 20px;
+    }
+
+    .page-cover p {
+      font-size: clamp(0.7rem, 1.5vw, 0.9rem);
+      color: #a07840;
+      letter-spacing: 2px;
+    }
+
+    .page-cover .cover-ornament {
+      font-size: clamp(2rem, 5vw, 4rem);
+      margin-bottom: 24px;
+      color: #d4a853;
+    }
+
+    .page-back-cover {
+      background: linear-gradient(135deg, #1a0a00 0%, #2e1500 100%);
+    }
+
+    /* Loading overlay */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: #0d0d0d;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      transition: opacity 0.5s;
+    }
+
+    #loading p { color: #d4a853; font-size: 1.1rem; margin-top: 16px; letter-spacing: 2px; }
+
     .spinner {
-      width: 48px; height: 48px;
-      border: 5px solid #333;
-      border-top-color: #e94560;
+      width: 52px; height: 52px;
+      border: 4px solid #333;
+      border-top-color: #d4a853;
       border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      animation: spin 0.9s linear infinite;
+    }
+
+    #progress-bar {
+      width: 200px; height: 4px;
+      background: #333;
+      border-radius: 2px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+
+    #progress-fill {
+      height: 100%;
+      background: #d4a853;
+      width: 0%;
+      transition: width 0.2s;
+      border-radius: 2px;
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    footer {
-      text-align: center;
-      padding: 10px;
-      font-size: 0.75rem;
-      color: #555;
-    }
-
-    #search-bar {
+    /* Controls */
+    #controls {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-left: auto;
+      gap: 16px;
+      padding: 16px;
+      color: #d4a853;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
     }
 
-    #search-input {
-      padding: 7px 10px;
-      border-radius: 6px;
-      border: 1px solid #444;
-      background: #1a1a2e;
-      color: #eee;
-      font-size: 0.9rem;
-      width: 160px;
+    .ctrl-btn {
+      background: rgba(212,168,83,0.15);
+      border: 1px solid #d4a853;
+      color: #d4a853;
+      padding: 8px 20px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-family: 'Georgia', serif;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      transition: all 0.2s;
+    }
+
+    .ctrl-btn:hover { background: rgba(212,168,83,0.3); }
+    .ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    #page-display { min-width: 120px; text-align: center; }
+
+    footer {
+      color: #444;
+      font-size: 0.7rem;
+      padding: 12px;
+      letter-spacing: 1px;
+    }
+
+    /* Hint */
+    #hint {
+      color: #665533;
+      font-size: 0.75rem;
+      margin-bottom: 8px;
+      letter-spacing: 1px;
     }
   </style>
 </head>
@@ -163,114 +206,150 @@
 
 <div id="loading">
   <div class="spinner"></div>
-  <span>Loading book...</span>
+  <p>Opening book...</p>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
 </div>
 
 <header>
-  <h1>Embedded AI</h1>
-  <span id="page-info">Page — / —</span>
+  Embedded AI
+  <span>A Complete Guide</span>
 </header>
 
-<div id="toolbar">
-  <button id="btn-first" title="First page">&#171; First</button>
-  <button id="btn-prev" title="Previous page">&#8249; Prev</button>
-  <label>Page <input type="number" id="page-input" min="1" value="1"/> </label>
-  <button id="btn-next" title="Next page">Next &#8250;</button>
-  <button id="btn-last" title="Last page">Last &#187;</button>
-
-  <label>Zoom
-    <select id="zoom-select">
-      <option value="0.6">60%</option>
-      <option value="0.75">75%</option>
-      <option value="1" selected>100%</option>
-      <option value="1.25">125%</option>
-      <option value="1.5">150%</option>
-      <option value="2">200%</option>
-    </select>
-  </label>
-
-  <div id="search-bar">
-    <input type="number" id="search-input" placeholder="Go to page..." min="1"/>
-    <button id="btn-go">Go</button>
+<div id="desk">
+  <div id="hint">Click the page edges or drag to turn pages</div>
+  <div id="book-container"></div>
+  <div id="controls">
+    <button class="ctrl-btn" id="btn-prev">&#8592; Prev</button>
+    <span id="page-display">— / —</span>
+    <button class="ctrl-btn" id="btn-next">Next &#8594;</button>
   </div>
 </div>
 
-<div id="canvas-container">
-  <div id="book-wrapper">
-    <canvas id="pdf-canvas"></canvas>
-  </div>
-</div>
-
-<footer>Embedded AI Book Reader</footer>
+<footer>Use arrow keys or click page edges to navigate</footer>
 
 <script>
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   const PDF_URL = './Embedded_AI_Book.pdf';
-  let pdfDoc = null;
-  let currentPage = 1;
-  let scale = 1;
-  const canvas = document.getElementById('pdf-canvas');
-  const ctx = canvas.getContext('2d');
 
-  async function renderPage(num) {
-    const page = await pdfDoc.getPage(num);
-    const viewport = page.getViewport({ scale });
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+  // Determine page size based on screen
+  const maxW = Math.min(window.innerWidth * 0.45, 480);
+  const PAGE_W = Math.floor(maxW);
+  const PAGE_H = Math.floor(PAGE_W * 1.414); // A4 ratio
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
+  async function buildBook() {
+    const pdf = await pdfjsLib.getDocument(PDF_URL).promise;
+    const totalPages = pdf.numPages;
+    const fill = document.getElementById('progress-fill');
 
-    document.getElementById('page-info').textContent = `Page ${num} / ${pdfDoc.numPages}`;
-    document.getElementById('page-input').value = num;
-    document.getElementById('btn-prev').disabled = num <= 1;
-    document.getElementById('btn-first').disabled = num <= 1;
-    document.getElementById('btn-next').disabled = num >= pdfDoc.numPages;
-    document.getElementById('btn-last').disabled = num >= pdfDoc.numPages;
-  }
+    // Pre-render all pages to canvases
+    const renderedCanvases = [];
 
-  async function goToPage(num) {
-    num = Math.max(1, Math.min(num, pdfDoc.numPages));
-    currentPage = num;
-    await renderPage(currentPage);
-    document.getElementById('canvas-container').scrollTo({ top: 0, behavior: 'smooth' });
-  }
+    for (let i = 1; i <= totalPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(PAGE_W / viewport.width, PAGE_H / viewport.height);
+      const scaledVP = page.getViewport({ scale });
 
-  pdfjsLib.getDocument(PDF_URL).promise.then(doc => {
-    pdfDoc = doc;
-    document.getElementById('page-input').max = doc.numPages;
-    document.getElementById('search-input').max = doc.numPages;
-    renderPage(currentPage).then(() => {
-      document.getElementById('loading').style.display = 'none';
+      const c = document.createElement('canvas');
+      c.width = scaledVP.width;
+      c.height = scaledVP.height;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: scaledVP }).promise;
+      renderedCanvases.push(c);
+
+      fill.style.width = ((i / totalPages) * 100) + '%';
+    }
+
+    // Build page elements for StPageFlip
+    const container = document.getElementById('book-container');
+
+    // StPageFlip needs a div with children .page elements
+    const bookDiv = document.createElement('div');
+    bookDiv.id = 'flipbook';
+    container.appendChild(bookDiv);
+
+    // Front cover
+    const cover = document.createElement('div');
+    cover.className = 'page page-cover';
+    cover.innerHTML = `
+      <div class="cover-ornament">&#9670;</div>
+      <h1>Embedded AI</h1>
+      <p>A Complete Guide to AI on Edge Devices</p>
+    `;
+    bookDiv.appendChild(cover);
+
+    // PDF pages
+    renderedCanvases.forEach(c => {
+      const pageDiv = document.createElement('div');
+      pageDiv.className = 'page';
+      pageDiv.style.background = '#fdf8f0';
+      pageDiv.appendChild(c);
+      bookDiv.appendChild(pageDiv);
     });
-  }).catch(err => {
+
+    // Back cover
+    const backCover = document.createElement('div');
+    backCover.className = 'page page-cover page-back-cover';
+    backCover.innerHTML = `<div class="cover-ornament">&#9670;</div><p>Embedded AI</p>`;
+    bookDiv.appendChild(backCover);
+
+    // Init StPageFlip
+    const pageFlip = new St.PageFlip(bookDiv, {
+      width: PAGE_W,
+      height: PAGE_H,
+      size: 'fixed',
+      minWidth: PAGE_W,
+      maxWidth: PAGE_W,
+      minHeight: PAGE_H,
+      maxHeight: PAGE_H,
+      showCover: true,
+      mobileScrollSupport: false,
+      drawShadow: true,
+      flippingTime: 700,
+      usePortrait: false,
+      startZIndex: 0,
+      autoSize: false,
+      maxShadowOpacity: 0.5,
+      showPageCount: false,
+      clickEventForward: true,
+    });
+
+    pageFlip.loadFromHTML(bookDiv.querySelectorAll('.page'));
+
+    // Controls
+    const pageDisplay = document.getElementById('page-display');
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+
+    function updateDisplay() {
+      const cur = pageFlip.getCurrentPageIndex();
+      const total = pageFlip.getPageCount();
+      pageDisplay.textContent = `${cur + 1} / ${total}`;
+      btnPrev.disabled = cur === 0;
+      btnNext.disabled = cur >= total - 1;
+    }
+
+    pageFlip.on('flip', updateDisplay);
+    pageFlip.on('init', updateDisplay);
+
+    btnPrev.addEventListener('click', () => pageFlip.flipPrev());
+    btnNext.addEventListener('click', () => pageFlip.flipNext());
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight') pageFlip.flipNext();
+      if (e.key === 'ArrowLeft') pageFlip.flipPrev();
+    });
+
+    // Hide loading
+    const loadingEl = document.getElementById('loading');
+    loadingEl.style.opacity = '0';
+    setTimeout(() => loadingEl.style.display = 'none', 500);
+  }
+
+  buildBook().catch(err => {
     document.getElementById('loading').innerHTML =
-      `<p style="color:#e94560">Failed to load PDF.<br>${err.message}</p>`;
-  });
-
-  document.getElementById('btn-prev').addEventListener('click', () => goToPage(currentPage - 1));
-  document.getElementById('btn-next').addEventListener('click', () => goToPage(currentPage + 1));
-  document.getElementById('btn-first').addEventListener('click', () => goToPage(1));
-  document.getElementById('btn-last').addEventListener('click', () => goToPage(pdfDoc.numPages));
-
-  document.getElementById('page-input').addEventListener('change', e => {
-    goToPage(parseInt(e.target.value));
-  });
-
-  document.getElementById('zoom-select').addEventListener('change', e => {
-    scale = parseFloat(e.target.value);
-    renderPage(currentPage);
-  });
-
-  document.getElementById('btn-go').addEventListener('click', () => {
-    const val = parseInt(document.getElementById('search-input').value);
-    if (!isNaN(val)) goToPage(val);
-  });
-
-  document.addEventListener('keydown', e => {
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goToPage(currentPage + 1);
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goToPage(currentPage - 1);
+      `<p style="color:#e94560;padding:20px">Failed to load: ${err.message}</p>`;
   });
 </script>
 </body>
