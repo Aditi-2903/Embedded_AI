@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Embedded AI — Book Reader</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/StPageFlip/2.0.7/page-flip.browser.js"></script>
+  <script src="https://unpkg.com/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -295,7 +295,8 @@
     bookDiv.appendChild(backCover);
 
     // Init StPageFlip
-    const pageFlip = new St.PageFlip(bookDiv, {
+    const PageFlipLib = window.St ? window.St.PageFlip : window.PageFlip;
+    const pageFlip = new PageFlipLib(bookDiv, {
       width: PAGE_W,
       height: PAGE_H,
       size: 'fixed',
