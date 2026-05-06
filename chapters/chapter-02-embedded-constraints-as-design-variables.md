@@ -1,354 +1,231 @@
-# Chapter 2: Embedded Constraints as Design Variables
+# Chapter 2 — Embedded Constraints as Design Variables
+*What the datasheet tells you, and what you have to figure out yourself.*
 
-You already know what a microcontroller datasheet looks like. You've read power consumption tables, decoded memory maps, and calculated whether a peripheral can meet a timing requirement. If you've designed embedded systems before, this chapter will feel familiar—but the questions you ask of the data will be different.
+You already know how to read a microcontroller datasheet. You've decoded memory maps, calculated whether an ADC can sample fast enough, and figured out if sleep mode current will get you through a year on a coin cell. Those questions haven't changed. But when AI enters the system, you start asking different questions about the same specifications.
 
-When you evaluated hardware for a sensor acquisition system, you cared whether the ADC could sample at 10 kHz, whether the UART buffer could handle peak data rates, and whether sleep mode current was low enough for a year of battery life. Those constraints still matter. But when AI enters the system, you add new questions: Can this processor multiply a 128×128 matrix in under 50 milliseconds? Can this memory hierarchy store 400,000 floating-point weights and still leave room for activation buffers? Can this device run inference every 100 milliseconds for a week on a coin cell?
+The nRF52840 datasheet lists 256 KB of RAM. That number meant one thing when you were buffering sensor data and running a PID controller. It means something different when you're storing activation tensors for a neural network. The STM32F4's 100 MHz clock speed looked adequate for your control loop. Does it look adequate when you need to multiply 128×128 matrices? The ESP32's sleep current of 10 µA was fine for a sensor that woke up once an hour. Is it fine when inference runs every five seconds?
 
-The specifications haven't changed. The microcontroller's SRAM capacity, clock speed, and power consumption are the same whether you're running a PID controller or a neural network. What has changed is how you translate those specifications into design constraints. This chapter teaches that translation—how to take the hardware you already understand and ask the new questions that AI integration demands.
+The specifications are the same. The hardware is the same. What's changed is the translation from datasheet numbers to design constraints. This chapter teaches that translation—how to take the hardware you understand and ask the questions that AI integration demands.
 
-By the end of this chapter, you will be able to specify the memory, compute, power, and timing constraints of any embedded target in terms relevant to AI deployment. You will be able to read a datasheet and determine whether a proposed hardware platform can support a given model before you write a single line of code. And you will be able to compare two targets and explain precisely why one can run an AI model and the other cannot.
+<!-- → TABLE: Side-by-side comparison of traditional embedded constraints vs. AI-driven constraints for the same hardware specs — columns: specification (RAM, clock speed, power), traditional question asked, AI-driven question asked -->
 
-The skill is not new datasheet literacy. The skill is knowing what to look for when the application includes inference.
+## Memory: Where Things Live and Why It Matters
 
-## Memory: What Fits and Where It Lives
+A neural network is a data structure. It has weights—millions of floating-point numbers arranged in matrices. It has biases, layer configurations, intermediate buffers. All of it must exist somewhere in memory. The first question for any AI deployment is: does it fit?
 
-A neural network is a data structure. It has weights, biases, layer configurations, and intermediate buffers that must exist somewhere in the device's memory. The first constraint question for any AI deployment is: does it fit?
+But "fit" isn't yes or no. Embedded memory is partitioned, and where data lives determines how you can use it. A model might fit in total memory and still fail because its runtime activations exceed the fast memory you actually have available during inference.
 
-But "fit" is not a single yes-or-no question. Embedded memory is partitioned into regions with different characteristics, and where data lives determines how it can be used. A model that "fits" in total memory may still fail if its runtime activations exceed the available fast memory, or if its weights must be paged from external storage during inference.
+<!-- → INFOGRAPHIC: Memory hierarchy diagram for typical microcontroller showing flash (1 MB, slow, non-volatile, stores weights), on-chip SRAM (256 KB, fast, volatile, stores activations), and optional external PSRAM (32 MB, slower than on-chip, power-hungry) with arrows showing data flow during inference -->
 
-Consider the nRF52840, a popular Bluetooth Low Energy microcontroller used in wearables and IoT devices. The datasheet lists 1 MB of flash and 256 KB of RAM. At first glance, that sounds generous for embedded AI—enough to store a moderately sized model and run inference. But the memory specification requires interpretation.
+Look at the nRF52840—a Bluetooth Low Energy microcontroller popular in wearables. The datasheet says 1 MB of flash, 256 KB of RAM. That sounds generous for embedded AI. Enough to store a model, enough to run it. But you have to interpret what those numbers mean.
 
-Flash is non-volatile storage. It retains data when power is removed, which makes it suitable for storing the firmware binary, including the model's trained weights. Flash is read-only during execution—you cannot write to it from running code without invoking special erase and write cycles that are slow and have limited endurance. Flash is also slower to access than RAM, typically requiring wait states when reading at high clock speeds. For AI deployment, flash is where the model weights live. A model with 300,000 parameters stored as 32-bit floats requires 1.2 MB—which exceeds the nRF52840's 1 MB flash budget before you account for the rest of the firmware.
+Flash is non-volatile. It keeps data when power dies, which makes it right for storing firmware and model weights. But flash is read-only during execution—you can't write to it from running code without slow erase cycles that wear out the memory. Flash is also slower than RAM, often requiring wait states at high clock speeds. For AI, flash is where weights live. A model with 300,000 parameters stored as 32-bit floats needs 1.2 MB. That exceeds the nRF52840's 1 MB flash before you even account for the rest of your firmware.
 
-RAM (SRAM on most microcontrollers) is volatile, fast, and writable. It holds the variables, stack, heap, and buffers that change during program execution. For AI inference, RAM is where activations live—the intermediate results computed as data flows through the network. When you run inference on an image classification network, each layer produces an output tensor that becomes the input to the next layer. Those tensors must exist in memory simultaneously, at least for the duration of the inference pass. The size of the largest intermediate tensor, plus any scratch buffers required by the inference engine, determines the minimum RAM requirement.
+RAM—SRAM on most microcontrollers—is volatile, fast, writable. It holds variables, stack, heap, the buffers that change during execution. For AI, RAM is where activations live. When you run inference on an image, each layer produces an output tensor that becomes input to the next layer. Those tensors must exist in memory at least for the duration of inference. The size of the largest intermediate tensor, plus scratch buffers the inference engine needs, determines minimum RAM.
 
-The nRF52840's 256 KB of RAM is shared between the application firmware, the Bluetooth stack (which can consume 20–40 KB depending on configuration), the system heap, and the inference activations. If your model's activation memory footprint is 180 KB, and the Bluetooth stack consumes 30 KB, you have 46 KB remaining for everything else. That's workable for a simple application, but tight. If the model's activations require 200 KB, the deployment fails the RAM constraint even though the model "fits" in total memory.
+The nRF52840's 256 KB of RAM is shared. Your application firmware takes some. The Bluetooth stack takes 20–40 KB depending on configuration. System heap takes some. If your model's activations need 180 KB and Bluetooth takes 30 KB, you have 46 KB left for everything else. That's workable if you're careful. If activations need 200 KB, you fail the RAM constraint even though the model "fits" in total memory.
 
-External memory complicates the picture. Some microcontrollers support external SRAM or DRAM via parallel or serial interfaces. The ESP32-S3, for example, includes integrated support for external PSRAM (pseudo-static RAM) up to 32 MB. This dramatically increases available memory, but at a cost: external memory is slower to access than on-chip SRAM, and accessing it consumes more power because data must traverse the external bus. If your model's activations live in external PSRAM, every layer's computation involves reading inputs from external memory and writing outputs back to external memory, which increases both latency and energy consumption.
+<!-- → CHART: Stacked bar chart showing RAM allocation breakdown for nRF52840 — total 256 KB divided into segments: Bluetooth stack (30 KB), activations (180 KB), firmware/heap/stack (46 KB remaining). Include a second bar showing the failed case where activations need 200 KB, visually exceeding total capacity -->
 
-The memory constraint question, then, is not "does the model fit?" but "does the model fit in the right kind of memory, and does the partitioning leave enough headroom for the rest of the system?"
+External memory changes the picture. Some microcontrollers support external SRAM or DRAM through parallel or serial interfaces. The ESP32-S3 supports external PSRAM up to 32 MB. That dramatically increases available memory, but at a cost. External memory is slower than on-chip SRAM. Accessing it burns more power because data crosses an external bus. If your activations live in external PSRAM, every layer's computation reads from external memory and writes back to external memory. Latency goes up. Energy consumption goes up.
 
-To answer that question, you need two numbers from the model: the size of the weights (which determines flash usage) and the size of the activation buffers (which determines RAM usage). You need three numbers from the hardware: flash capacity, on-chip RAM capacity, and external memory capacity if available. And you need one number from the system: how much of that memory is already allocated to other functions.
+The question isn't "does the model fit?" The question is "does the model fit in the right kind of memory, and does the partitioning leave headroom for the rest of the system?"
 
-The calculation is straightforward. For the weights:
+Here's what you need. Two numbers from the model: weight size (determines flash usage) and activation buffer size (determines RAM usage). Three numbers from the hardware: flash capacity, on-chip RAM capacity, external memory if available. One number from the system: how much memory is already spoken for.
 
-Flash required = (number of parameters) × (bytes per parameter)
+The calculation is direct. For weights: flash required equals number of parameters times bytes per parameter. A model with 500,000 parameters stored as 32-bit floats needs 2 MB. Stored as 8-bit integers after quantization, it needs 500 KB. If your target has 1 MB of flash and 200 KB is consumed by application firmware, you have 800 KB available. The float32 model doesn't fit. The int8 model does.
 
-A model with 500,000 parameters stored as 32-bit floats requires 2 MB. Stored as 8-bit integers (quantized), it requires 500 KB. If the target has 1 MB of flash and 200 KB is already consumed by the application firmware, you have 800 KB available. The float32 model doesn't fit. The int8 model does.
+For activations, it depends on network architecture. A feedforward network needs memory for the largest layer's output plus scratch buffers. A convolutional network needs the current layer's output and sometimes the previous layer's output if they're used together. The exact requirement depends on how the inference engine allocates memory—whether it reuses buffers or allocates fresh for each layer.
 
-For the activations, the calculation depends on the network architecture. For a feedforward network, you need memory for the largest layer's output tensor, plus any scratch buffers. For a convolutional network, you need memory for the current layer's output and sometimes the previous layer's output if they're used together. The exact requirement depends on the inference engine's memory allocation strategy—whether it reuses buffers or allocates fresh memory for each layer.
+TinyML frameworks usually provide a memory profiler. TensorFlow Lite for Microcontrollers has a function that returns the required tensor arena size—the working memory for inference. If that number exceeds available RAM, the model doesn't deploy.
 
-Many TinyML frameworks provide a memory profiler that reports activation memory usage for a given model. TensorFlow Lite for Microcontrollers, for example, includes a function that returns the required tensor arena size—the working memory needed for inference. If that number exceeds available RAM, the model doesn't deploy.
+Here's what this looks like. You're evaluating the ESP32-S3 for keyword spotting. The datasheet lists 512 KB on-chip SRAM, support for 32 MB external PSRAM. Your model has 80,000 parameters—320 KB as float32, 80 KB as int8—and needs 240 KB of activation memory.
 
-Here's what that looks like in practice. Suppose you're evaluating the ESP32-S3 for a keyword spotting application. The datasheet lists 512 KB of on-chip SRAM and support for up to 32 MB of external PSRAM. The model has 80,000 parameters (320 KB as float32, 80 KB as int8) and requires 240 KB of activation memory during inference.
+Weights fit comfortably. The ESP32-S3 has 8 MB of flash. Even float32 uses only 320 KB. Activations are the binding constraint. With 512 KB on-chip SRAM, 240 KB for activations leaves 272 KB for everything else. But if the RTOS, WiFi stack, and application logic already consume 150 KB, you have 122 KB of headroom. Tight but feasible. If the system also needs large buffers for audio processing—the model runs on spectrograms—those buffers push SRAM over the limit and activations spill into external PSRAM.
 
-The weights fit comfortably in flash—the ESP32-S3 has 8 MB of flash, and even the float32 version uses only 320 KB. The activations are the binding constraint. With 512 KB of on-chip SRAM, the 240 KB activation requirement leaves 272 KB for the rest of the system. But if 150 KB is already consumed by the RTOS, WiFi stack, and application logic, you have 122 KB of headroom—tight, but feasible. If the system also needs large buffers for audio processing (the keyword spotting model runs on audio spectrograms), those buffers push SRAM usage over the limit, and activations spill into external PSRAM.
+Now the design choice is explicit. Accept the latency and power cost of external memory access, or reduce the model's activation footprint. Use a smaller architecture. Quantize activations. Apply layer fusion to shrink intermediate tensors.
 
-The design choice is now explicit: accept the latency and power cost of external PSRAM access, or reduce the model's activation footprint by using a smaller architecture, quantizing activations, or applying layer fusion techniques that reduce intermediate tensor sizes.
+This is what "memory as a design variable" means. The constraint isn't a wall. It's a trade-off surface where you balance model size, inference speed, power, system complexity.
 
-This is what "memory as a design variable" means. The constraint is not a hard wall—it's a trade-off surface where you balance model size, inference speed, power consumption, and system complexity.
+## Compute: From Clock Speed to Operations Per Second
 
-## Compute: Throughput, Latency, and What the Processor Can Actually Do
+A microcontroller's clock speed tells you cycles per second. It doesn't tell you neural network operations per second. That translation—MHz to multiply-accumulates per second—is the second constraint you must quantify.
 
-A microcontroller's clock speed tells you how many cycles per second the processor executes. It does not tell you how many neural network operations per second it can perform. That translation—from MHz to multiply-accumulates per second—is the second constraint you must quantify.
+The gap exists because different operations take different numbers of cycles, and not all cycles are compute cycles. Memory access consumes cycles. Pipeline stalls consume cycles. Interrupt handling consumes cycles. Effective compute throughput—the rate at which you execute the multiply-accumulate operations that dominate inference—depends on instruction set, pipeline architecture, dedicated hardware for arithmetic, and how well inference code maps to those resources.
 
-The gap between clock speed and useful throughput exists because different operations take different numbers of cycles, and not all cycles are compute cycles. Memory access consumes cycles. Pipeline stalls consume cycles. Interrupt handling consumes cycles. The effective compute throughput—the rate at which you can execute the multiply-accumulate operations that dominate neural network inference—depends on the processor's instruction set, its pipeline architecture, whether it has dedicated hardware for floating-point or integer arithmetic, and how efficiently the inference code maps to those resources.
+<!-- → TABLE: Three-column comparison of compute capabilities for STM32F411 (Cortex-M4, 100 MHz, 60-70 MMAC/s sustained), STM32H7A3 (Cortex-M7, 280 MHz, 180-220 MMAC/s sustained), Raspberry Pi Zero 2 W (Cortex-A53 quad-core, 1 GHz, >5 GOPS sustained int8) — showing theoretical peak, realistic sustained throughput, and inference time for 50M MAC model -->
 
-Consider three representative targets: the STM32F411 (ARM Cortex-M4 at 100 MHz), the STM32H7A3 (ARM Cortex-M7 at 280 MHz), and the Raspberry Pi Zero 2 W (ARM Cortex-A53 quad-core at 1 GHz). All three are "embedded" in the sense that they're used in resource-constrained applications, but their compute capabilities differ by orders of magnitude.
+Consider three targets: STM32F411 (ARM Cortex-M4 at 100 MHz), STM32H7A3 (Cortex-M7 at 280 MHz), Raspberry Pi Zero 2 W (Cortex-A53 quad-core at 1 GHz). All three get called "embedded" in some contexts, but their compute capabilities differ by orders of magnitude.
 
-The STM32F411 is a mid-range microcontroller. Its Cortex-M4 core includes a single-precision floating-point unit (FPU) that can execute one floating-point multiply-accumulate (MAC) per cycle when data is in registers. At 100 MHz, that's a theoretical peak of 100 million MACs per second (100 MMAC/s). But that's peak throughput, achieved only when the pipeline is fully utilized and all data is in cache or registers. In practice, you lose cycles to memory access, instruction fetch, and pipeline bubbles. A realistic sustained throughput for inference is 60–70 MMAC/s for well-optimized code.
+The STM32F411 is mid-range. Its Cortex-M4 includes a single-precision floating-point unit that can do one multiply-accumulate per cycle when data is in registers. At 100 MHz, that's 100 million MACs per second theoretical peak. But that's peak—achieved only when the pipeline is full and all data is cached. In practice you lose cycles to memory access, instruction fetch, pipeline bubbles. Realistic sustained throughput for inference is 60–70 MMAC/s with optimized code.
 
-The Cortex-M4 also supports single instruction, multiple data (SIMD) operations via the ARM DSP extensions, which allow it to perform multiple 8-bit or 16-bit integer operations in parallel. For quantized neural networks that use 8-bit integer arithmetic, SIMD can double or quadruple throughput compared to scalar operations. But using SIMD requires careful code optimization—it's not automatic.
+The Cortex-M4 also has SIMD via ARM DSP extensions, which let it do multiple 8-bit or 16-bit integer operations in parallel. For quantized networks using 8-bit arithmetic, SIMD can double or quadruple throughput versus scalar operations. But using SIMD requires careful optimization. It's not automatic.
 
-Now consider the STM32H7A3. Its Cortex-M7 core runs at 280 MHz and includes a double-precision FPU, deeper pipelines, and more aggressive prefetching and caching. Theoretical peak throughput is 280 MMAC/s for single-precision floats. Sustained throughput is typically 180–220 MMAC/s, depending on memory access patterns and cache efficiency. The H7 family also includes larger caches (16 KB L1 instruction, 16 KB L1 data, 512 KB L2) compared to the F4's smaller caches (4 KB instruction, no data cache), which reduces the performance penalty when working with large data structures like neural network weights.
+The STM32H7A3 runs at 280 MHz with deeper pipelines, more aggressive prefetching, larger caches. Theoretical peak is 280 MMAC/s for single-precision floats. Sustained is typically 180–220 MMAC/s depending on memory patterns and cache efficiency. The H7 has bigger caches—16 KB L1 instruction, 16 KB L1 data, 512 KB L2—compared to the F4's 4 KB instruction cache and no data cache. That reduces the penalty for working with large structures like network weights.
 
-The Raspberry Pi Zero 2 W is an entirely different class. It's a Linux-capable application processor with four Cortex-A53 cores, each capable of out-of-order execution, NEON SIMD extensions for vector operations, and clock speeds up to 1 GHz. The Cortex-A53 can issue multiple instructions per cycle, and NEON can execute 16 8-bit MACs per cycle per core. Theoretical peak throughput is over 60 billion operations per second (GOPS) for 8-bit integer inference. Sustained throughput is lower due to memory bandwidth limits and OS overhead, but still an order of magnitude higher than the STM32H7.
+The Raspberry Pi Zero 2 W is a different class entirely. Linux-capable application processor. Four Cortex-A53 cores with out-of-order execution, NEON SIMD for vector ops, clocks to 1 GHz. The A53 can issue multiple instructions per cycle. NEON can do 16 8-bit MACs per cycle per core. Theoretical peak exceeds 60 GOPS for 8-bit inference. Sustained is lower because of memory bandwidth and OS overhead, but still an order of magnitude higher than the STM32H7.
 
-These differences matter because they determine how long inference takes. Suppose you have a convolutional neural network that requires 50 million MACs per inference pass. On the STM32F411 at 60 MMAC/s sustained, inference takes roughly 830 milliseconds. On the STM32H7 at 200 MMAC/s, it takes 250 milliseconds. On the Raspberry Pi Zero 2 W, with optimized NEON code, it might take 20–30 milliseconds.
+These differences determine how long inference takes. You have a convolutional network requiring 50 million MACs per inference. On the STM32F411 at 60 MMAC/s sustained, inference takes roughly 830 milliseconds. On the STM32H7 at 200 MMAC/s, it takes 250 ms. On the Pi Zero 2 W with optimized NEON code, maybe 20–30 ms.
 
-If your application has a hard latency requirement of 100 milliseconds, the STM32F411 fails immediately. The STM32H7 fails if you cannot achieve 200 MMAC/s sustained (which you might not if memory accesses dominate). The Raspberry Pi meets the requirement comfortably—but at a cost in power, complexity, and boot time.
+If your application has a hard 100 ms latency requirement, the F411 fails immediately. The H7 fails if you can't sustain 200 MMAC/s—which you might not if memory accesses dominate. The Pi meets the requirement comfortably but costs you in power, complexity, boot time.
 
-Here's the calculation you need to perform for any target. First, determine the model's operation count—the total number of MACs or floating-point operations (FLOPs) required per inference. Many ML frameworks report this during model compilation. If not, you can estimate it from the architecture: for a fully connected layer, the operation count is (input size) × (output size). For a convolutional layer, it's (output height) × (output width) × (output channels) × (kernel height) × (kernel width) × (input channels).
+Here's the calculation. First, get the model's operation count—total MACs or FLOPs per inference. ML frameworks usually report this during compilation. If not, estimate from architecture. For a fully connected layer, operation count is input size times output size. For convolution, it's output height times output width times output channels times kernel height times kernel width times input channels.
 
-Second, estimate the processor's sustained throughput for the relevant operation type (float32 MACs, int8 MACs, etc.). This requires either profiling or consulting published benchmarks. ARM provides CoreMark scores and EEMBC benchmarks for their cores, which give rough guidance. Vendor application notes sometimes include ML inference benchmarks for their specific chips.
+Second, estimate the processor's sustained throughput for the relevant operation type. This needs profiling or published benchmarks. ARM provides CoreMark scores and EEMBC benchmarks. Vendor app notes sometimes include ML inference benchmarks for specific chips.
 
-Third, calculate latency:
+Third, calculate latency: total operations divided by sustained throughput.
 
-Inference latency (seconds) = (total operations) / (sustained throughput)
+<!-- → INFOGRAPHIC: Flow diagram showing the three-step compute constraint calculation — step 1: extract model operation count from framework profiler, step 2: find processor sustained throughput from benchmarks or datasheets, step 3: divide operations by throughput to get latency in seconds, with example numbers plugged in -->
 
-For example, a model with 120 million int8 MACs running on an ESP32-S3 (claimed 400 GOPS for 8-bit inference with acceleration) gives a theoretical latency of 0.3 seconds. But that assumes perfect utilization of the accelerator, which requires the model to be compiled specifically for the ESP32's AI extensions and all activations to fit in the optimized data path. In practice, you multiply the theoretical latency by a utilization factor (often 0.5–0.7) to account for real-world inefficiencies.
+A model with 120 million int8 MACs on an ESP32-S3—which claims 400 GOPS for 8-bit inference with acceleration—gives theoretical latency of 0.3 seconds. But that assumes perfect accelerator utilization, which requires the model compiled specifically for ESP32's AI extensions and all activations fitting the optimized data path. In practice, multiply theoretical latency by a utilization factor, often 0.5–0.7, to account for real inefficiencies.
 
-The compute constraint is satisfied if the calculated latency is less than the application's latency budget. If not, you have three options: choose a faster processor, reduce the model's operation count, or offload inference to a hardware accelerator.
+The compute constraint is satisfied if calculated latency is less than your application's budget. If not, three options: faster processor, reduce the model's operation count, offload to hardware accelerator.
 
-## Power: Average, Peak, and the Battery Life Equation
+## Power: The Battery Life Equation
 
-A neural network doesn't just consume time—it consumes energy. For battery-powered devices, energy is the binding constraint more often than memory or compute. A model that fits in memory and meets latency requirements can still fail if it drains the battery too quickly.
+A neural network doesn't just consume time. It consumes energy. For battery-powered devices, energy is the binding constraint more often than memory or compute. A model that fits in memory and meets latency can still fail if it drains the battery too fast.
 
-Power consumption in embedded systems is not a single number. It's a profile that varies with operating mode, clock speed, peripheral activity, and duty cycle. A microcontroller running inference draws one current when the processor is active at full clock speed, a different current when peripherals are active but the processor is idle, and a third current when the device is in deep sleep. Total energy consumption is the integral of that profile over time.
+Power consumption isn't a single number. It's a profile varying with operating mode, clock speed, peripheral activity, duty cycle. A microcontroller running inference draws one current when the processor is active at full clock, a different current when peripherals are active but processor is idle, a third current in deep sleep. Total energy is the integral of that profile over time.
 
-For AI deployment, the power profile has three regimes: inference (processor active, high clock, high power), idle (processor sleeping, peripherals off, low power), and peripheral activity (sensors active, processor sleeping or running at reduced clock). The duty cycle—the fraction of time spent in each regime—determines average power, and average power determines battery life.
+For AI, the power profile has three regimes: inference (processor active, high clock, high power), idle (processor sleeping, peripherals off, low power), and peripheral activity (sensors active, processor sleeping or reduced clock). The duty cycle—fraction of time in each regime—determines average power. Average power determines battery life.
 
-Let's quantify this for a wearable fitness tracker using the nRF52840. The application runs a neural network to classify user activity (walking, running, sitting, cycling) from accelerometer data. Inference runs every 5 seconds. Between inference passes, the device sleeps.
+<!-- → INFOGRAPHIC: Power profile timeline showing a typical 5-second cycle for wearable AI — 80 ms active at 5.3 mA (inference running), 4920 ms idle at 2.8 µA (deep sleep), with annotations showing how duty cycle determines average current and therefore battery life -->
 
-The datasheet provides power specifications for different operating modes:
+Let's quantify this for a wearable fitness tracker using the nRF52840. It runs a neural network to classify activity from accelerometer data. Inference every 5 seconds. Between passes, the device sleeps.
 
-Active (CPU running at 64 MHz, flash access, radio off): 5.3 mA
+The datasheet gives power specs for different modes:
 
-Idle (CPU in sleep, RAM retention, RTC running): 2.8 µA
+- Active (CPU at 64 MHz, flash access, radio off): 5.3 mA
+- Idle (CPU sleeping, RAM retained, RTC running): 2.8 µA
+- System off (RAM not retained): 0.4 µA
 
-System off (RAM not retained, wake on reset): 0.4 µA
+Inference takes 80 ms measured on target. During those 80 ms, the processor is active drawing 5.3 mA. For the remaining 4920 ms of the 5-second cycle, idle mode draws 2.8 µA.
 
-Inference takes 80 milliseconds (measured on target, not theoretical). During those 80 ms, the processor is active and draws 5.3 mA. For the remaining 4920 ms of the 5-second cycle, the device is in idle mode and draws 2.8 µA.
-
-Average current is the time-weighted sum of each mode's current:
+Average current is the time-weighted sum:
 
 I_avg = (I_active × t_active + I_idle × t_idle) / (t_active + t_idle)
 
 For this profile:
 
-I_avg = (5.3 mA × 0.08 s + 0.0028 mA × 4.92 s) / 5 s
+I_avg = (5.3 mA × 0.08 s + 0.0028 mA × 4.92 s) / 5 s = 0.088 mA
 
- I_avg = (0.424 mA·s + 0.0138 mA·s) / 5 s
+A 220 mAh coin cell sustains 0.088 mA for roughly 2500 hours—104 days. That exceeds the two-week target comfortably.
 
- I_avg = 0.088 mA
+Now suppose inference latency doubles to 160 ms because you added a layer for better accuracy. Active time per cycle goes from 80 ms to 160 ms:
 
-A 220 mAh coin cell battery can sustain 0.088 mA for roughly 2500 hours, or 104 days. That exceeds the two-week target comfortably.
+I_avg = (5.3 mA × 0.16 s + 0.0028 mA × 4.84 s) / 5 s = 0.172 mA
 
-Now suppose the inference latency doubles to 160 milliseconds because you added another layer to improve accuracy. The active time per cycle increases from 80 ms to 160 ms:
+Battery life drops to 1279 hours, 53 days. Still acceptable.
 
-I_avg = (5.3 mA × 0.16 s + 0.0028 mA × 4.84 s) / 5 s
+But suppose the model now needs inference every second instead of every 5 seconds to catch short activities. With 160 ms inference per 1-second cycle:
 
- I_avg = 0.172 mA
+I_avg = (5.3 mA × 0.16 s + 0.0028 mA × 0.84 s) / 1 s = 0.850 mA
 
-Battery life drops to 1279 hours, or 53 days—still acceptable.
+Battery life drops to 259 hours, 11 days. Below the two-week threshold. Power constraint violated.
 
-But suppose the model now requires inference every second instead of every 5 seconds to catch short-duration activities. With 160 ms inference time per 1-second cycle:
+<!-- → CHART: Three-scenario comparison showing battery life degradation — scenario 1: 80 ms inference every 5s (104 days), scenario 2: 160 ms inference every 5s (53 days), scenario 3: 160 ms inference every 1s (11 days). Bar chart with battery life on Y-axis and scenarios on X-axis, with horizontal line marking the two-week target threshold -->
 
-I_avg = (5.3 mA × 0.16 s + 0.0028 mA × 0.84 s) / 1 s
+This isn't hypothetical. Deployed wearables fail this way. The failure isn't sudden—the device works correctly, just runs out of power faster than users expect. The constraint violation shows up as a UX problem: more frequent charging erodes the value proposition.
 
- I_avg = 0.850 mA
+The power constraint is harder to satisfy than memory or compute because it couples to both. Reducing inference latency by running higher clock increases active current. Reducing memory usage by keeping activations in external RAM increases power because external access costs more energy than on-chip SRAM. Every optimization that helps one constraint can hurt another.
 
-Battery life drops to 259 hours, or 11 days—below the two-week threshold. The power constraint is violated.
+Power also has a peak constraint, not just average. Even if average power is acceptable, peak power can violate supply limits. When a processor runs inference, current spikes. If that spike exceeds what the supply or battery can deliver, voltage sags, the processor browns out, system resets. This is especially bad for coin cells, which have high internal resistance and can't sustain high draws even though total capacity is adequate.
 
-This is not a hypothetical calculation. Deployed wearables fail this way. The failure is not sudden—the device works correctly, it just runs out of power faster than users expect. The constraint violation manifests as a user experience problem: more frequent charging, which erodes the product's value proposition.
+A CR2032 coin cell has 220 mAh nominal capacity, but maximum continuous discharge current is typically 3 mA. If your inference draws 10 mA, battery voltage collapses under load and the system crashes. Solutions: larger battery, add a capacitor for peak current, reduce peak power by slowing clock or spreading computation over time.
 
-The power constraint is harder to satisfy than the memory or compute constraints because it couples to both. Reducing inference latency (compute constraint) by running at higher clock speed increases active current. Reducing memory usage by keeping activations in external RAM increases power because external memory accesses cost more energy than on-chip SRAM accesses. Every optimization that improves one constraint can degrade another.
+The power equation you need: battery life equals battery capacity divided by average current. But to get average current, you must profile actual power consumption of inference on target hardware, measure duty cycle, account for all system activity—not just inference, but sensor power, communication overhead, background tasks.
 
-Power also has a peak constraint, not just an average constraint. Even if average power is acceptable, peak power can violate supply limits. When a processor runs inference, current draw spikes. If that spike exceeds what the power supply or battery can deliver, the voltage sags, the processor brown-outs, or the system resets. This is especially problematic for coin cell batteries, which have high internal resistance and cannot sustain high current draws even though their total capacity is adequate.
+## Reading Datasheets for AI
 
-For example, a CR2032 coin cell has a nominal capacity of 220 mAh, but its maximum continuous discharge current is typically 3 mA. If your inference routine draws 10 mA, the battery voltage collapses under load, and the system crashes. The solution is to use a larger battery, add a capacitor to supply peak current, or reduce peak power by slowing the clock or spreading the computation over time.
+You have a model. You have an application with memory, compute, power, real-time requirements. You need hardware. The datasheet is your source of truth—but datasheets aren't written with AI in mind. Extracting relevant constraints requires knowing where to look and how to interpret marketing.
 
-The power constraint equation you need is:
+Start with memory specs. Flash capacity, SRAM capacity, external memory support. Flash must accommodate firmware plus model weights. SRAM must accommodate application heap, stack, RTOS overhead if applicable, inference activations. If the datasheet lists "total memory" without breaking down flash versus RAM, it's hiding something—usually that RAM is scarce.
 
-Battery life (hours) = Battery capacity (mAh) / Average current (mA)
+<!-- → TABLE: Datasheet red flags for AI deployment — red flag example, what it actually means, what to look for instead. Examples: "total memory 1.25 MB" without breakdown (hiding scarce RAM, look for explicit flash/SRAM split), "AI acceleration support" with no benchmarks (marketing claim, look for GOPS numbers or published inference latency), "ultra-low power" with only sleep current (incomplete picture, look for power vs clock speed curves and real application notes) -->
 
-But to get average current, you must profile the actual power consumption of inference on the target hardware, measure the duty cycle, and account for all system activity—not just the inference itself, but sensor power, communication overhead, and any background tasks.
+Watch for memory region details. Some microcontrollers partition SRAM into tightly coupled memory (TCM)—fast and deterministic—and standard SRAM, which may have wait states or arbitration delays. TCM is ideal for activations. If TCM is listed separately, note its size. Often much smaller than total SRAM.
 
-## Real-Time Constraints: Hard Deadlines and Worst-Case Execution Time
+Examine compute specs. Clock speed is the start but not sufficient. Look for processor core type—Cortex-M0, M4, M7, A53—and check for FPU, DSP extensions, SIMD support. A Cortex-M4 with FPU can run float32 inference efficiently. A Cortex-M0+ without FPU will emulate floating-point in software—ten times slower.
 
-Latency is not the same as real-time performance. A system with 100 ms average latency is not the same as a system with a 100 ms worst-case latency guarantee. Real-time constraints care about the tail of the distribution, not the mean.
+If the datasheet claims "AI acceleration" or "neural network support," dig deeper. What does that mean? Some vendors include dedicated MAC units or vector processors for matrix operations. Others just mean the chip is fast enough to run inference in software. Look for benchmarks: GOPS, CoreMark scores, published inference latency for standard models like MobileNet. If no benchmarks, the "AI" claim is marketing.
 
-A real-time system is one where correctness depends on timing. A soft real-time system prefers to meet deadlines but tolerates occasional misses. A hard real-time system must meet deadlines with provable certainty—missing a deadline is a system failure, not a performance degradation.
+Power specs need careful interpretation. Datasheets list current for different modes, but definitions vary by vendor. "Active current" might mean CPU at max clock with all peripherals enabled, or CPU running with flash access but peripherals off. "Sleep current" might include RAM retention or mean full power-down.
 
-Most embedded AI applications are soft real-time. A smart thermostat that classifies occupancy to adjust temperature can tolerate a delayed inference—the consequence is a slightly slower response, not a safety failure. But some applications are hard real-time. An industrial motor controller that uses AI to detect bearing faults must respond within a fixed time window or the fault progresses to catastrophic failure. A medical device that uses AI to detect cardiac arrhythmia must trigger an alert within a bounded time or the therapeutic window closes.
+Find the power versus clock speed curve. Most microcontrollers can run at reduced clock to save power. If your inference doesn't need max performance, lower clock reduces both active current and energy per inference. But some chips have stepped profiles—cutting clock by 50% doesn't cut power by 50% because static leakage and peripheral power remain constant.
 
-Neural network inference introduces variability that makes hard real-time guarantees difficult. Execution time can depend on:
+Look for real-world power numbers, not just active and sleep. App notes often include measured power for specific use cases. A note on "Battery Life for Bluetooth LE Sensors" might have the data you need if the sensor profile is similar to yours.
 
-Input data (some activations may short-circuit, some may trigger expensive branches)
+Check for errata. Every chip has bugs. Some errata affect power—"SRAM retention current higher than specified." Some affect peripherals. Some affect timing. Read the errata doc before committing to a platform. A bug that degrades sleep current by 10 µA can destroy battery life projections for ultra-low-power designs.
 
-Cache state (whether weights and activations are cached or must be fetched from main memory)
+The workflow: identify flash and SRAM capacity, compare against model weight and activation requirements. Identify processor core and clock, look up benchmarks or estimate throughput. Calculate inference latency from operation count and throughput. Find active and sleep current, estimate average power from duty cycle. Calculate battery life from average power and capacity. Check real-time capabilities: cache, TCM, interrupt latency, worst-case timing.
 
-Memory contention (other tasks or DMA transfers competing for bus bandwidth)
+If any constraint fails, the target isn't viable. If all pass with margin, it's a candidate. If constraints pass with no margin, revisit assumptions—measurements on real hardware often differ from datasheet projections by 20–30%.
 
-Interrupt latency (if inference runs at normal priority and can be preempted)
+## A Worked Example: Smart Agriculture Sensor
 
-For soft real-time applications, you measure average latency and ensure it's comfortably below the deadline with margin for variance. For hard real-time applications, you must bound the worst-case execution time (WCET) and prove that even the worst case meets the deadline.
+You're designing a sensor that monitors crop health with a camera and on-device classification. Requirements:
 
-WCET analysis for neural networks is an active research area with no settled practice. Traditional WCET analysis tools (like aiT or SWEET) model the processor's pipeline, cache, and memory system and compute the longest possible path through the code. But neural network inference code is large, complex, and often includes dynamic memory allocation and library calls that are difficult to analyze statically.
+- Capture 96×96 RGB image every 10 minutes
+- Run inference to classify healthy/diseased/pest-damaged
+- Report over LoRaWAN once per hour
+- Operate 6 months on 5000 mAh battery (solar not viable, tree canopy shading)
 
-## The pragmatic approach for hard real-time embedded AI is to constrain the problem:
+Three candidates:
 
-Use a fixed-point or integer-only network with no dynamic control flow. Every layer executes the same operations regardless of input data.
+**Option A: ESP32-S3**
+- Dual-core Xtensa LX7 at 240 MHz
+- 512 KB SRAM, 8 MB flash
+- AI acceleration (vector instructions, 400 GOPS claimed)
+- WiFi/Bluetooth (not needed but included)
+- Active: 40 mA, deep sleep: 10 µA
+- Cost: $4.50
 
-Disable interrupts during inference or run inference at highest priority so it cannot be preempted.
+**Option B: STM32L4R5**
+- Cortex-M4 at 120 MHz with FPU
+- 640 KB SRAM, 2 MB flash
+- No AI acceleration
+- Ultra-low-power design
+- Active: 12 mA at 120 MHz, deep sleep: 0.4 µA
+- Cost: $6.00
 
-Lock critical data (weights, activations) into cache or tightly coupled memory (TCM) to eliminate cache misses.
+**Option C: Raspberry Pi Zero 2 W**
+- Quad-core Cortex-A53 at 1 GHz
+- 512 MB LPDDR2
+- Linux-capable
+- Active: ~150 mA idle, ~350 mA under load
+- No true deep sleep
+- Cost: $15.00
 
-Measure WCET empirically by profiling inference on pathological inputs and adding safety margin (typically 20–50% over measured maximum).
+Your model: MobileNetV2-based classifier, 300,000 parameters (1.2 MB float32, 300 KB int8), 45 million MACs per inference, 200 KB activation memory.
 
-Use a scheduling framework that enforces execution time budgets and kills tasks that overrun.
+<!-- → TABLE: Hardware comparison matrix for the three options — rows for each constraint dimension (flash requirement, RAM requirement, compute latency, power consumption, battery life, cost), columns for ESP32-S3, STM32L4R5, and Pi Zero 2 W, with pass/fail/marginal indicators and the actual calculated values -->
 
-For example, suppose you have a vision-based inspection system that must classify parts on a conveyor belt moving at 1 meter per second. The inspection window is 200 ms. Inference must complete within that window, or the part leaves the field of view and the result is useless.
+Memory analysis: all three have sufficient flash for quantized model (300 KB). All have sufficient RAM for activations (200 KB). Memory is not binding.
 
-You profile inference on 10,000 test images and measure latency. The distribution shows a mean of 120 ms, a 95th percentile of 145 ms, and a maximum observed latency of 160 ms. Is 160 ms the WCET? Not necessarily—you may not have tested the input that triggers the worst case. You add 30% margin: 160 ms × 1.3 = 208 ms, which exceeds the 200 ms deadline.
+Compute analysis:
 
-The deployment fails the real-time constraint. You have three options: reduce the model's operation count to lower latency, increase the processor's clock speed, or redesign the inspection system to give inference more time (slow the conveyor, trigger earlier, etc.).
+- ESP32-S3: with acceleration, 45M MACs at 400 GOPS claimed gives 112 ms theoretical, likely 200–300 ms in practice
+- STM32L4R5: Cortex-M4 with FPU at 120 MHz sustains ~70 MMAC/s float32, giving 643 ms. For int8 with SIMD, ~140 MMAC/s, giving 320 ms
+- Pi Zero 2 W: with NEON and four cores, sustained throughput for int8 can exceed 5 GOPS, under 10 ms
 
-Real-time constraints are unforgiving. Average performance doesn't matter. Only the worst case matters. And if you cannot bound the worst case, you cannot deploy in a hard real-time application.
+All three meet compute—inference every 10 minutes allows latency up to several seconds.
 
-## Reading Datasheets for AI Suitability
+Power analysis—this is where they diverge:
 
-You have a model. You have an application with memory, compute, power, and real-time requirements. You need to select hardware. The datasheet is your source of truth—but datasheets are not written with AI deployment in mind, and extracting the relevant constraints requires knowing where to look and how to interpret marketing claims.
+Duty cycle: inference every 10 minutes for ~300 ms, idle rest of time. LoRaWAN once per hour is negligible.
 
-Start with memory specifications. Look for flash capacity, SRAM capacity, and external memory support. Flash capacity must accommodate the firmware plus model weights. SRAM capacity must accommodate the application heap, stack, RTOS overhead (if applicable), and inference activation buffers. If the datasheet lists "total memory" without breaking down flash vs. RAM, it's hiding something—usually that RAM is scarce.
+ESP32-S3: active 0.3 s per 600 s cycle. Average current = (40 mA × 0.3 s + 0.01 mA × 599.7 s) / 600 s = 0.03 mA. Battery life = 5000 mAh / 0.03 mA = 166,667 hours = 19 years. The ultra-low sleep current dominates when duty cycle is this low.
 
-Watch for memory region details. Some microcontrollers partition SRAM into tightly coupled memory (TCM), which is fast and deterministic, and standard SRAM, which may have wait states or arbitration delays. TCM is ideal for activations. If TCM is listed separately, note its size—it's often much smaller than total SRAM.
+STM32L4R5: active 0.32 s per 600 s. Average = (12 mA × 0.32 s + 0.0004 mA × 599.68 s) / 600 s = 0.0068 mA. Battery life = 735,000 hours = 84 years. Even lower sleep current gives multi-decade battery life. Unrealistic—self-discharge and LoRaWAN overhead will dominate.
 
-Next, examine compute specifications. Clock speed is the starting point, but not sufficient. Look for the processor core type (Cortex-M0, M4, M7, A53, etc.) and check whether it includes an FPU, DSP extensions, or SIMD support. A Cortex-M4 with FPU can run float32 inference efficiently. A Cortex-M0+ without FPU cannot—it will emulate floating-point in software, which is ten times slower.
+Pi Zero 2 W: no true deep sleep. Best case idles at ~150 mA. Average ≈ 150 mA continuous. Battery life = 5000 mAh / 150 mA = 33 hours. Catastrophic failure of power constraint. Even aggressive optimization to 50 mA gives only 100 hours—four days, not six months.
 
-If the datasheet claims "AI acceleration" or "neural network support," dig deeper. What does that mean? Some vendors include dedicated MAC units or vector processors that accelerate matrix operations. Others simply mean the chip is fast enough to run inference in software. Look for benchmark numbers: GOPS (giga-operations per second), CoreMark scores, or published inference latency for standard models like MobileNet or ResNet. If no benchmarks are provided, the "AI" claim is marketing.
+<!-- → CHART: Battery life comparison for the three options on logarithmic scale — ESP32-S3 (19 years), STM32L4R5 (84 years), Pi Zero 2 W (33 hours), with the 6-month requirement marked as horizontal line. Visual makes clear that Pi fails catastrophically while other two vastly exceed requirements -->
 
-Power specifications require the most careful interpretation. Datasheets list current consumption for different operating modes, but the definitions vary by vendor. "Active current" might mean CPU running at maximum clock with all peripherals enabled, or it might mean CPU running with flash access but peripherals off. "Sleep current" might include RAM retention or it might mean full power-down.
+Conclusion: ESP32-S3 and STM32L4R5 both meet all constraints. STM32 has better battery life and lower cost on paper, but ESP32's AI accelerator gives faster inference and headroom for future model updates. Pi is disqualified by power.
 
-Find the power vs. clock speed curve. Most microcontrollers can run at reduced clock to save power. If your inference doesn't need maximum performance, running at a lower clock reduces both active current and the energy per inference. But some chips have stepped power profiles—reducing clock by 50% doesn't reduce power by 50% because static leakage and peripheral power remain constant.
+In practice you'd select based on secondary factors: development ecosystem, LoRaWAN library support, camera interface, whether you trust ESP32's claimed acceleration (needs profiling on real hardware).
 
-Look for real-world power numbers, not just active and sleep. Application notes often include measured power for specific use cases. A note titled "Battery Life Estimation for Bluetooth LE Sensors" might include the data you need to estimate inference power if the sensor acquisition profile is similar to your application.
+This is constraint-driven evaluation. The numbers determine which hardware can deploy the model and which cannot. Chapter 3 shows you how to derive those model numbers—operation count, memory footprint—from the neural network architecture itself.
 
-Finally, check for errata. Every silicon chip has bugs. Some errata affect power consumption (e.g., "SRAM retention current higher than specified"), some affect peripherals, some affect timing. Read the errata document before committing to a platform. A bug that degrades sleep current by 10 µA can destroy battery life projections for ultra-low-power designs.
-
-## Here's the workflow:
-
-Identify flash and SRAM capacity. Compare against model weight size and activation memory requirement.
-
-Identify processor core and clock speed. Look up published benchmarks or estimate throughput from architecture specs.
-
-Calculate inference latency from model operation count and processor throughput.
-
-Find active and sleep current. Estimate average power from duty cycle.
-
-Calculate battery life from average power and battery capacity.
-
-Check real-time capabilities: cache, TCM, interrupt latency, worst-case timing.
-
-If any constraint fails, the target is not viable. If all constraints pass with margin, the target is a candidate. If constraints pass with no margin, revisit the assumptions—measurements on real hardware often differ from datasheet projections by 20–30%.
-
-## Comparing Targets: A Worked Example
-
-You are designing a smart agriculture sensor that monitors crop health using a camera and on-device image classification. The system must:
-
-Capture a 96×96 RGB image every 10 minutes
-
-Run inference to classify healthy/diseased/pest-damaged
-
-Report results over LoRaWAN once per hour
-
-Operate for 6 months on a 5000 mAh battery pack (solar charging is not viable due to tree canopy shading)
-
-You have three candidate platforms.
-
-Option A: ESP32-S3
-
-Dual-core Xtensa LX7 at 240 MHz
-
-512 KB SRAM, 8 MB flash
-
-AI acceleration (vector instructions, up to 400 GOPS claimed)
-
-WiFi and Bluetooth (not needed but included)
-
-Active current: 40 mA (CPU + AI accelerator)
-
-Deep sleep: 10 µA
-
-Cost: $4.50 per unit
-
-Option B: STM32L4R5
-
-ARM Cortex-M4 at 120 MHz with FPU
-
-640 KB SRAM, 2 MB flash
-
-No AI acceleration
-
-Ultra-low-power design
-
-Active current: 100 µA/MHz = 12 mA at 120 MHz
-
-Deep sleep: 0.4 µA
-
-Cost: $6.00 per unit
-
-Option C: Raspberry Pi Zero 2 W
-
-Quad-core ARM Cortex-A53 at 1 GHz
-
-512 MB LPDDR2 RAM
-
-Linux-capable, extensive software ecosystem
-
-Active current: ~150 mA (idle), ~350 mA (CPU load)
-
-Sleep modes: not designed for ultra-low-power
-
-Cost: $15.00 per unit
-
-You have a MobileNetV2-based classifier with 300,000 parameters (1.2 MB as float32, 300 KB as int8) and requires 45 million MACs per inference. Profiled activation memory is 200 KB.
-
-## Memory analysis:
-
-All three platforms have sufficient flash for the quantized model (300 KB). All have sufficient RAM for activations (200 KB). Memory is not the binding constraint.
-
-## Compute analysis:
-
-ESP32-S3: With AI acceleration, 45 million MACs at 400 GOPS claimed throughput gives 112 ms theoretical, likely 200–300 ms in practice depending on how well the model maps to the accelerator.
-
-STM32L4R5: Cortex-M4 with FPU at 120 MHz sustains roughly 70 MMAC/s for float32. Inference takes 45M / 70M = 643 ms. For int8 with SIMD, throughput doubles to ~140 MMAC/s, giving 320 ms.
-
-Raspberry Pi Zero 2 W: With NEON SIMD and four cores, sustained throughput for int8 inference can exceed 5 GOPS. Inference takes under 10 ms.
-
-All three meet the compute constraint comfortably—inference once every 10 minutes allows latency up to several seconds without violating the application timing.
-
-Power analysis:
-
-This is where the platforms diverge.
-
-The duty cycle is: inference every 10 minutes for ~300 ms (ESP32 or STM32), idle the rest of the time. LoRaWAN transmission is once per hour, negligible contribution to average power.
-
-ESP32-S3:
-
- Active for 0.3 s per 600 s cycle = 0.05% duty cycle.
-
- I_avg = (40 mA × 0.3 s + 0.01 mA × 599.7 s) / 600 s = 0.03 mA.
-
- Battery life = 5000 mAh / 0.03 mA = 166,667 hours = 19 years.
-
-Wait. That can't be right. The sleep current is 10 µA, not 0.01 mA—that's the same thing. Let me recalculate.
-
-I_avg = (40 mA × 0.3 s + 0.01 mA × 599.7 s) / 600 s = (12 + 6) / 600 = 0.03 mA.
-
-Actually, that is right. The ultra-low sleep current dominates the calculation when inference duty cycle is so low. This is why low-power embedded systems spend 99%+ of their time asleep.
-
-STM32L4R5:
-
- Active for 0.32 s per 600 s cycle (slightly longer inference).
-
- I_avg = (12 mA × 0.32 s + 0.0004 mA × 599.68 s) / 600 s = 0.0064 mA + 0.0004 mA = 0.0068 mA.
-
- Battery life = 5000 mAh / 0.0068 mA = 735,000 hours = 84 years.
-
-The STM32L4's lower active current and even lower sleep current give it a multi-decade battery life. This is unrealistic—battery self-discharge and LoRaWAN overhead will dominate.
-
-Raspberry Pi Zero 2 W:
-
- The Pi doesn't have a true deep sleep mode. Best case, it idles at ~150 mA with reduced clock.
-
- I_avg ≈ 150 mA (continuous).
-
- Battery life = 5000 mAh / 150 mA = 33 hours.
-
-The Raspberry Pi fails the power constraint catastrophically. Even if you could reduce idle power to 50 mA (aggressive optimization), battery life is only 100 hours—four days, not six months.
-
-Conclusion:
-
-Option A (ESP32-S3) and Option B (STM32L4R5) both meet all constraints. The STM32 has better battery life and lower cost on paper, but the ESP32's AI accelerator gives faster inference and more headroom for future model updates. The Raspberry Pi is disqualified by power consumption.
-
-In practice, you'd select based on secondary factors: development ecosystem, LoRaWAN library support, camera interface availability, and whether you trust the claimed AI acceleration of the ESP32 (which requires profiling on real hardware).
-
-This is the constraint-driven evaluation this chapter teaches. The numbers are not abstract—they determine which hardware can deploy the model and which cannot. When you move to Chapter 3, you'll learn how to derive those model numbers—the operation count, the memory footprint—from the neural network architecture itself.
-
-But first, you must be able to read a datasheet and extract constraints. The model is coming. The hardware is here. The question is: can they fit together?
-
-
----
-
-*[<- Chapter 1](./chapter-01-when-ai-meets-constrained-hardware.md) | [Table of Contents](../README.md) | [Chapter 3 ->](./chapter-03-ml-for-embedded-engineers.md)*
+But first you must read a datasheet and extract constraints. The model is coming. The hardware is here. The question is: can they fit together?
